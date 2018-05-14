@@ -1,3 +1,5 @@
+import numpy
+
 def transfer_internal_node_names(tree_to, tree_from):
     rf_dist = tree_to.robinson_foulds(tree_from)[0]
     assert rf_dist==0, 'tree topologies are different. RF distance ='+str(rf_dist)
