@@ -311,5 +311,8 @@ def regime2tree(file):
     return out
 
 
-
+def get_dating_method(file):
+    with open(file) as f:
+        dating_method = f.read().replace('\n', '')
+    return dating_method
 
