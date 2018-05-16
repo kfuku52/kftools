@@ -1,7 +1,7 @@
 import ete3, numpy, pandas, re
-from kfexpression import *
-from kfphylo import *
-from kfutil import *
+from kftools.kfexpression import *
+from kftools.kfphylo import *
+from kftools.kfutil import *
 
 def nwk2table(tree, mode=['branch_length', 'branch_support', 'node_name'], age=False, parent=False, sister=False):
     if (mode == 'branch_length'):
