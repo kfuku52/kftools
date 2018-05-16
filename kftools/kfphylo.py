@@ -44,28 +44,6 @@ def add_numerical_node_labels(tree):
         i+=1
     return(tree)
 
-def nwk2table(tree, mode=['branch_length','branch_support']):
-    if (mode=='branch_length'):
-        tree_format = 1
-        attr = 'dist'
-    elif (mode=='branch_support'):
-        tree_format=0
-        attr = 'support'
-    cn = ["numerical_label", mode]
-    if type(tree)==str:
-        tree = ete3.PhyloNode(tree, format=tree_format)
-    elif type(tree)==ete3.PhyloNode:
-        tree = tree
-    tree = kftools.kfphylo.add_numerical_node_labels(tree)
-    df = pandas.DataFrame(0, index=range(0, len(list(tree.traverse()))), columns=cn)
-    row=0
-    for node in tree.traverse():
-        df.loc[row,"numerical_label"] = node.numerical_label
-        df.loc[row,mode] = getattr(node, attr)
-        row+=1
-    df = df.sort_values(by='numerical_label', ascending=True)
-    return(df)
-
 def transfer_root(tree_to, tree_from, verbose=False):
     assert len(set(tree_to.get_leaf_names()) - set(tree_from.get_leaf_names())) == 0
     subroot_leaves = [n.get_leaf_names() for n in tree_from.get_children()]
