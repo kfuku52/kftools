@@ -1,4 +1,4 @@
-import ete3, numpy, re
+import ete3, numpy, pandas, re
 from kfexpression import *
 from kfphylo import *
 from kfutil import *
