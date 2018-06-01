@@ -299,7 +299,7 @@ def branch2tree(df):
 def regime2tree(file):
     df = pandas.read_csv(file, sep='\t', header=0, index_col=False)
     out = dict()
-    out['num_regime'] = int(df['regime'].dropna().max()+1)
+    out['num_regime'] = int(df['regime'].fillna(0).max()+1)
     params = df.loc[df['regime'].isnull(), 'param'].values
     traits = df.columns[3:]
     for param in params:
