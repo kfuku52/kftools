@@ -46,9 +46,10 @@ def add_numerical_node_labels(tree):
 
 def transfer_root(tree_to, tree_from, verbose=False):
     assert len(set(tree_to.get_leaf_names()) - set(tree_from.get_leaf_names())) == 0
-    subroot_leaves = [n.get_leaf_names() for n in tree_from.get_children()]
-    outgroups = subroot_leaves[0] if (len(subroot_leaves[0]) < len(subroot_leaves[1])) else subroot_leaves[1]
-    ingroups = subroot_leaves[0] if (len(subroot_leaves[0]) > len(subroot_leaves[1])) else subroot_leaves[1]
+    subroot_leaves = [ n.get_leaf_names() for n in tree_from.get_children() ]
+    is_n0_bigger_than_n1 = (len(subroot_leaves[0]) > len(subroot_leaves[1]))
+    ingroups = subroot_leaves[0] if is_n0_bigger_than_n1 else subroot_leaves[1]
+    outgroups = subroot_leaves[0] if not is_n0_bigger_than_n1 else subroot_leaves[1]
     if verbose:
         print('outgroups:', outgroups)
     tree_to.set_outgroup(ingroups[0])
