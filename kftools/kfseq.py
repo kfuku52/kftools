@@ -88,12 +88,15 @@ def weighted_mean_root_thetas(subroot_thetas, tree, model):
                 max_value = max([ t[cp][param] for t in subroot_thetas.values() ])
                 min_branch_length = None
                 max_branch_length = None
-                for srk in subroot_thetas.keys():
-                    if (subroot_thetas[srk][cp][param]==min_value):
-                        min_branch_length = subroot_branch_lengths[srk]
-                    elif (subroot_thetas[srk][cp][param]==max_value):
-                        max_branch_length = subroot_branch_lengths[srk]
-                weighted_mean = min_value + ((max_value-min_value)*(min_branch_length/(min_branch_length+max_branch_length)))
+                if (min_value == max_value):
+                    weighted_mean = min_value
+                else:
+                    for srk in subroot_thetas.keys():
+                        if (subroot_thetas[srk][cp][param]==min_value):
+                            min_branch_length = subroot_branch_lengths[srk]
+                        elif (subroot_thetas[srk][cp][param]==max_value):
+                            max_branch_length = subroot_branch_lengths[srk]
+                    weighted_mean = min_value + ((max_value-min_value)*(min_branch_length/(min_branch_length+max_branch_length)))
                 print('param =', param, 'codon_position =', cp, 'min =', min_value, 'max =', max_value,
                       'min_bl =', min_branch_length, 'max_bl =', max_branch_length, 'weighted_mean =', weighted_mean)
                 root_thetas[cp][param] = weighted_mean
