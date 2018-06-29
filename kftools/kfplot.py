@@ -1,9 +1,34 @@
 import matplotlib.pyplot
+import seaborn
 import numpy
 import pandas
 import scipy.stats
 import statsmodels.formula.api
 from decimal import Decimal
+
+def stacked_barplot(x, y, data, colors, ax):
+    assert not all([isinstance(x, str), isinstance(y, str)])
+    assert any([isinstance(x, list), isinstance(y, list)])
+    assert any([isinstance(x, str), isinstance(y, str)])
+    cols = {'x':x, 'y':y}
+    dfs = dict()
+    dfs['x'] = pandas.DataFrame(data.loc[:,x])
+    dfs['y'] = pandas.DataFrame(data.loc[:,y])
+    for k in cols.keys():
+        if isinstance(cols[k], list):
+            ncol = dfs[k].columns.shape[0]
+            for i in reversed(range(ncol)):
+                dfs[k].iloc[:,i] = dfs[k].iloc[:,:i+1].sum(axis=1)
+    df = pandas.concat([dfs['x'], dfs['y']], axis=1)
+    if isinstance(cols['x'], list):
+        ncol = dfs['x'].columns.shape[0]
+        for i in reversed(range(ncol)):
+            seaborn.barplot(x=dfs['x'].columns[i], y=y, data=df, color=colors[i], ax=ax)
+    if isinstance(cols['y'], list):
+        ncol = dfs['y'].columns.shape[0]
+        for i in reversed(range(ncol)):
+            seaborn.barplot(x=x, y=dfs['y'].columns[i], data=df, color=colors[i], ax=ax)
+    return ax
 
 def density_scatter(x, y, df=None, ax=None, cor=True, diag=False, reg_family=None, hue_log=False,
                     show_cor_p=True, plot_range='each', return_ims=False, vmin=None, vmax=None,
@@ -103,6 +128,41 @@ def density_scatter(x, y, df=None, ax=None, cor=True, diag=False, reg_family=Non
         return ims
     else:
         return ax
+
+def hist_boxplot(x='', category='', df=pandas.DataFrame(), colors={}, xlim=[], bins=[], alpha=0.9, box_step=0.15, ax=None):
+    category_values = df[category].drop_duplicates()
+    if isinstance(colors, dict):
+        category_values = list(colors.keys())
+    box_position = 1 + (box_step*len(category_values))
+    yticks = [0.0,0.2,0.4,0.6,0.8,1.0]
+    x_values = dict()
+    x_nums = dict()
+    bins=numpy.arange(xmins[x]-((xmaxs[x]-xmins[x])/50), xmaxs[x]+((xmaxs[x]-xmins[x])/50), (xmaxs[x]-xmins[x])/100)
+    for cv in category_values:
+        label = cv
+        if isinstance(colors, dict):
+            color = colors[cv]
+        elif isinstance(colors, list):
+            color = colors.pop()
+        df_tmp=df.loc[(df[category]==cv),:]
+        x_values[cv] = df_tmp[x].dropna()
+        x_nums[cv] = df_tmp[x].dropna().shape[0]
+        hist_kws={'cumulative':True,'histtype':'step','lw':1,'alpha':alpha}
+        seaborn.distplot(x_values[cv], color=color, kde=False, bins=bins, ax=ax, hist_kws=hist_kws, norm_hist=True, label=label)
+        box = ax.boxplot(x_values[cv].tolist(), positions=[box_position,], vert=False, showfliers=False, widths=[0.1,])
+        for element in ['boxes', 'whiskers', 'fliers', 'means', 'medians', 'caps']:
+            matplotlib.pyplot.setp(box[element], color=color, linestyle='solid')
+        yticks.append(box_position)
+        box_position = box_position - box_step
+    ax.set_xlabel(x)
+    ax.set_ylabel('Cumulative frequency')
+    ax.set_xlim(numpy.mean([xlim[0],min(bins)]),numpy.mean([xlim[1],max(bins)]))
+    ax.set_ylim(-0.02, 1.1+(box_step*len(category_values)))
+    ax.set_yticks(yticks)
+    yticklabels = [ y for y in yticks if y<=1 ] + category_values
+    ax.set_yticklabels(yticklabels)
+    return ax
+
 
 if __name__=="__main__":
     matplotlib.pyplot.interactive(False)

@@ -164,6 +164,10 @@ def get_misc_node_statistics(tree_file):
     cn2 = ["parent", "sister", "child1", "child2", "so_event_parent"]
     cn = cn1 + cn2
     df = pandas.DataFrame(0, index=range(0, len(list(tree.traverse()))), columns=cn)
+    df.loc[:, "parent"] = -999
+    df.loc[:, "sister"] = -999
+    df.loc[:, "child1"] = -999
+    df.loc[:, "child2"] = -999
     df.loc[:, "so_event"] = "L"
     df.loc[:, "so_event_parent"] = "S"
     tree = taxonomic_annotation(tree)
