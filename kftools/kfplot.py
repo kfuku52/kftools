@@ -137,7 +137,7 @@ def hist_boxplot(x='', category='', df=pandas.DataFrame(), colors={}, xlim=[], b
     yticks = [0.0,0.2,0.4,0.6,0.8,1.0]
     x_values = dict()
     x_nums = dict()
-    bins=numpy.arange(xmins[x]-((xmaxs[x]-xmins[x])/50), xmaxs[x]+((xmaxs[x]-xmins[x])/50), (xmaxs[x]-xmins[x])/100)
+    bins=numpy.arange(xlim[0]-((xlim[1]-xlim[0])/50), xlim[1]+((xlim[1]-xlim[0])/50), (xlim[1]-xlim[0])/100)
     for cv in category_values:
         label = cv
         if isinstance(colors, dict):
