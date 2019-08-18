@@ -157,7 +157,7 @@ def ou2table(regime_file, leaf_file, input_tree_file):
         row += 1
     return (df)
 
-def get_misc_node_statistics(tree_file):
+def get_misc_node_statistics(tree_file, tax_annot=False):
     tree = ete3.PhyloNode(tree_file, format=1)
     tree = add_numerical_node_labels(tree)
     cn1 = ["numerical_label", "taxon", "taxid", "num_sp", "num_leaf", "so_event", "dup_conf_score"]
@@ -170,7 +170,15 @@ def get_misc_node_statistics(tree_file):
     df.loc[:, "child2"] = -999
     df.loc[:, "so_event"] = "L"
     df.loc[:, "so_event_parent"] = "S"
-    tree = taxonomic_annotation(tree)
+    if tax_annot:
+        tree = taxonomic_annotation(tree)
+    else:
+        for node in tree.traverse():
+            node.taxid = -999
+            if node.is_leaf():
+                node.sci_name = re.sub('_.*','',node.name.replace('_',' ',1))
+            else:
+                node.sci_name = ''
     row = 0
     for node in tree.traverse():
         df.loc[row, "numerical_label"] = node.numerical_label

@@ -23,11 +23,11 @@ def stacked_barplot(x, y, data, colors, ax):
     if isinstance(cols['x'], list):
         ncol = dfs['x'].columns.shape[0]
         for i in reversed(range(ncol)):
-            seaborn.barplot(x=dfs['x'].columns[i], y=y, data=df, color=colors[i], ax=ax)
+            seaborn.barplot(x=dfs['x'].columns[i], y=y, data=df, color=colors[i], ax=ax, linewidth=0)
     if isinstance(cols['y'], list):
         ncol = dfs['y'].columns.shape[0]
         for i in reversed(range(ncol)):
-            seaborn.barplot(x=x, y=dfs['y'].columns[i], data=df, color=colors[i], ax=ax)
+            seaborn.barplot(x=x, y=dfs['y'].columns[i], data=df, color=colors[i], ax=ax, linewidth=0)
     return ax
 
 def density_scatter(x, y, df=None, ax=None, cor=True, diag=False, reg_family=None, hue_log=False,
