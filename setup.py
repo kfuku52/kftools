@@ -10,5 +10,5 @@ setup(
         url              = 'https://github.com/kfuku52/kftools.git',
         keywords         = '',
         packages         = find_packages(),
-        install_requires = [],
+        install_requires = ['ete3','numpy','pandas','matplotlib','seaborn','scipy'],
         )
