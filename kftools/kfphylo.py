@@ -74,9 +74,12 @@ def transfer_root(tree_to, tree_from, verbose=False):
             break
     return tree_to
 
-def check_ultrametric(tree, tol=1e-3):
+def check_ultrametric(tree, tol=1e-2):
     root2leaf_dist = [tree.get_distance(target=l) for l in tree.get_leaves()]
-    is_ultrametric = (max(root2leaf_dist) - min(root2leaf_dist)) < tol
+    dif_tree_length = (max(root2leaf_dist) - min(root2leaf_dist))
+    is_ultrametric = dif_tree_length < tol
+    if (dif_tree_length > tol):
+        print('(max - min) tree length (', dif_tree_length, ') was bigger than tol (', tol, ').')
     return is_ultrametric
 
 def taxonomic_annotation(tree):

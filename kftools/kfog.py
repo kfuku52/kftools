@@ -49,8 +49,6 @@ def nwk2table(tree, mode=['branch_length', 'branch_support', 'node_name'], age=F
 
 def node_gene2species(gene_tree, species_tree):
     gene_tree = add_numerical_node_labels(gene_tree)
-    ultrametric_tol = 1e-3
-    root2leaf_dist = [gene_tree.get_distance(target=l) for l in gene_tree.get_leaves()]
     assert check_ultrametric(gene_tree)
     for leaf in gene_tree.iter_leaves():
         leaf_name_split = leaf.name.split("_")
