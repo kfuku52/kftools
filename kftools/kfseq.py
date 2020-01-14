@@ -24,9 +24,17 @@ def codon2nuc_freqs(codon_freqs=dict(), model=''):
 def nuc_freq2theta(nuc_freqs=list()):
     thetas = list()
     for i in range(len(nuc_freqs)):
-        theta = nuc_freqs[i]['G'] + nuc_freqs[i]['C']
-        theta1 = nuc_freqs[i]['A'] / (nuc_freqs[i]['A']+nuc_freqs[i]['T'])
-        theta2 = nuc_freqs[i]['G'] / (nuc_freqs[i]['G']+nuc_freqs[i]['C'])
+        AT_freq = nuc_freqs[i]['A']+nuc_freqs[i]['T']
+        GC_freq = nuc_freqs[i]['G']+nuc_freqs[i]['C']
+        theta = GC_freq
+        if not AT_freq==0:
+            theta1 = nuc_freqs[i]['A'] / (nuc_freqs[i]['A']+nuc_freqs[i]['T'])
+        else:
+            theta1 = 0.5
+        if not GC_freq==0:
+            theta2 = nuc_freqs[i]['G'] / (nuc_freqs[i]['G']+nuc_freqs[i]['C'])
+        else:
+            theta2 = 0.5
         thetas.append({'theta':theta, 'theta1':theta1, 'theta2':theta2,})
     return thetas
 

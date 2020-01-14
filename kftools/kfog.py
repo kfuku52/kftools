@@ -294,17 +294,6 @@ def get_iqtree_model_stats(file):
     return out
 
 
-def branch2tree(df):
-    out = dict()
-    out['num_branch'] = df.shape[0]
-    out['num_spe'] = (df['so_event'] == 'S').sum()
-    out['num_dup'] = (df['so_event'] == 'D').sum()
-    out['num_sp'] = df['num_sp'].max()
-    out['tree_length_iqtree'] = df['bl_iqtree'].sum()
-    out['tree_length_time'] = df['bl_dated'].sum()
-    out['tree_height'] = df['age'].max()
-    return out
-
 
 def regime2tree(file):
     df = pandas.read_csv(file, sep='\t', header=0, index_col=False)
