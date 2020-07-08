@@ -29,7 +29,6 @@ def add_numerical_node_labels(tree):
     all_leaf_names = tree.get_leaf_names()
     all_leaf_names.sort()
     leaf_numerical_labels = dict()
-    power = 0
     for i in range(0, len(all_leaf_names)):
         leaf_numerical_labels[all_leaf_names[i]] = 2**i
     numerical_labels = list()
@@ -58,7 +57,6 @@ def transfer_root(tree_to, tree_from, verbose=False):
     else:
         outgroup_ancestor = tree_to.get_common_ancestor(outgroups)
     tree_to.set_outgroup(outgroup_ancestor)
-    subroot_node_names = [n.name for n in tree_to.get_children()]
     subroot_to = tree_to.get_children()
     subroot_from = tree_from.get_children()
     total_subroot_length_to = sum([n.dist for n in subroot_to])

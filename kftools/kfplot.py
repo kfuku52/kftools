@@ -163,6 +163,45 @@ def hist_boxplot(x='', category='', df=pandas.DataFrame(), colors={}, xlim=[], b
     ax.set_yticklabels(yticklabels)
     return ax
 
+def ols_annotations(x, y, data=None, ax=None, color='black', font_size=8, textxy=[0.05,0.95], textva='top',
+                    method='quantreg', stats=['N','slope','slope_p']):
+    import statsmodels.api as sm
+    import statsmodels.formula.api as smf
+    if data is None:
+        data = pandas.DataFrame({'X':x,'Y':y})
+        x = 'X'
+        y = 'Y'
+    data = data.sort_values(x)
+    if method=='ols':
+        X = sm.add_constant(data.loc[:,x])
+        Y = data.loc[:,y]
+        mod = sm.OLS(Y, X)
+        res = mod.fit()
+    elif method=='quantreg':
+        mod = smf.quantreg(y+' ~ '+x, data)
+        res = mod.fit(q=0.5)
+    N = data.shape[0]
+    slope = res.params[x]
+    slope_p = res.pvalues[x]
+    rsquared = res.rsquared_adj
+    rsquared_p = res.f_pvalue
+    text = ''
+    for stat in stats:
+        if stat=='N':
+            text += 'N = {:,}\n'.format(N)
+        if stat=='slope':
+            text += 'slope = {}\n'.format('%.2f'%Decimal(slope))
+        if stat=='slope_p':
+            text += 'P = {}\n'.format('%.2E'%Decimal(slope_p))
+        if stat=='rsquared':
+            text += 'R2 = {}\n'.format('%.2f'%Decimal(rsquared))
+        if stat=='rsquared_p':
+            text += 'P = {}\n'.format('%.2E'%Decimal(rsquared_p))
+    ax.text(textxy[0], textxy[1], text, transform=ax.transAxes, va=textva, color=color, fontsize=font_size)
+    xmin = data.loc[:,x].min()
+    xmax = data.loc[:,x].max()
+    ax.plot(data[x].values[[0,N-1]], res.predict()[[0,N-1]], color=color)
+
 
 if __name__=="__main__":
     matplotlib.pyplot.interactive(False)
