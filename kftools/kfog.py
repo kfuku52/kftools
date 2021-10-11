@@ -267,7 +267,7 @@ def get_aln_stats(file):
     out = dict()
     seqs = open(file).read().split('>')
     for i in range(len(seqs)):
-        seqs[i] = re.sub('^>.*\n', '', seqs[i], 1)
+        seqs[i] = re.sub('^[^\n]*\n', '', seqs[i])
     seq_lens_w_gap = [len(seq) for seq in seqs if len(seq) != 0]
     out['num_site'] = max(seq_lens_w_gap)
     for i in range(len(seqs)):
@@ -315,3 +315,17 @@ def get_dating_method(file):
         dating_method = f.read().replace('\n', '')
     return dating_method
 
+
+def get_most_recent(b, nl, og, target_col, target_value, return_col, og_col='orthogroup'):
+    is_og = (b.loc[:,og_col]==og)
+    b_og = b.loc[is_og,:]
+    root_nl = b_og.loc[:,'numerical_label'].max()
+    current_nl = nl
+    while (current_nl!=root_nl):
+        is_current_nl = (b_og.loc[:,'numerical_label']==current_nl)
+        current_value = b_og.loc[is_current_nl,target_col].values[0]
+        if (current_value==target_value):
+            return b_og.loc[is_current_nl,return_col].values[0]
+        else:
+            current_nl = b_og.loc[is_current_nl,'parent'].values[0]
+    return numpy.nan # No target event found between the nl node and the root
