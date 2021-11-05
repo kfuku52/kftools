@@ -1,8 +1,16 @@
+import re
+import ast
+import os
+
 from setuptools import setup, find_packages
+
+with open(os.path.join('csubst', '__init__.py')) as f:
+    match = re.search(r'__version__\s+=\s+(.*)', f.read())
+version = str(ast.literal_eval(match.group(1)))
 
 setup(
         name             = 'kftools',
-        version          = "0.1",
+        version          = version,
         description      = 'Utility tools for personal use',
         license          = "BSD 3-clause License",
         author           = "Kenji Fukushima",
