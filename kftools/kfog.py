@@ -106,7 +106,7 @@ def ou2table(regime_file, leaf_file, input_tree_file):
             for sub_node in node.traverse():
                 sub_node.regime = regime_no
     df_leaf_unique = df_leaf.loc[
-        df_leaf['param'] == 'mu', df_leaf.columns[[c not in ['leaf', 'param'] for c in df_leaf.columns]]]
+        df_leaf['param'] == 'mu', df_leaf.columns[[c not in ['label', 'param'] for c in df_leaf.columns]]]
     df_leaf_unique = df_leaf_unique.drop_duplicates()
     df_leaf_unique = df_leaf_unique.groupby(by='regime').mean()
     df_leaf_unique = df_leaf_unique.reset_index()
@@ -216,7 +216,6 @@ def compute_delta(df, column):
     df = df.drop('parent_' + column, axis=1)
     return df
 
-
 def get_notung_root_stats(file):
     out = dict()
     with open(file) as f:
@@ -232,7 +231,6 @@ def get_notung_root_stats(file):
                 out['ntg_worst_root_score'] = float(m.group(2))
 
     return out
-
 
 def get_notung_reconcil_stats(file):
     out = dict()
@@ -261,7 +259,6 @@ def get_root_stats(file):
                 rooting_method = m.group(1).replace('first ', '')
                 out['rooting_method'] = rooting_method
     return out
-
 
 def get_aln_stats(file):
     out = dict()
