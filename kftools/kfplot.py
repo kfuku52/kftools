@@ -32,7 +32,7 @@ def stacked_barplot(x, y, data, colors, ax):
 
 def density_scatter(x, y, df=None, ax=None, cor=True, diag=False, reg_family=None, hue_log=False,
                     show_cor_p=True, plot_range='each', return_ims=False, vmin=None, vmax=None,
-                    cbar=True):
+                    cbar=True, cmap='jet'):
     # https://stackoverflow.com/questions/10439961/efficiently-create-a-density-plot-for-high-density-regions-points-for-sparse-re
     if df is None:
         df = pandas.DataFrame()
@@ -81,7 +81,8 @@ def density_scatter(x, y, df=None, ax=None, cor=True, diag=False, reg_family=Non
     xdat1 = xval[ind][hhsub < thresh] # low density points
     ydat1 = yval[ind][hhsub < thresh]
     hh[hh < thresh] = numpy.nan # fill the areas with low density by NaNs
-    ims = ax.imshow(numpy.flipud(hh.T),cmap='jet',extent=numpy.array(xyrange).flatten(), vmin=vmin, vmax=vmax, interpolation='none', origin='upper', aspect="auto")
+    ims = ax.imshow(numpy.flipud(hh.T), cmap=cmap, extent=numpy.array(xyrange).flatten(),
+                    vmin=vmin, vmax=vmax, interpolation='none', origin='upper', aspect="auto")
     ax.plot(xdat1, ydat1, '.',color='darkblue')
     if cbar:
         cbar = matplotlib.pyplot.colorbar(mappable=ims, ax=ax, format=matplotlib.ticker.ScalarFormatter(useMathText=True))
