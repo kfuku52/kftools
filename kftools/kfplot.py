@@ -32,7 +32,7 @@ def stacked_barplot(x, y, data, colors, ax):
 
 def density_scatter(x, y, df=None, ax=None, cor=True, diag=False, reg_family=None, hue_log=False,
                     show_cor_p=True, plot_range='each', return_ims=False, vmin=None, vmax=None,
-                    cbar=True, cmap='jet'):
+                    cbar=True, cmap='jet', num_bin=20):
     # https://stackoverflow.com/questions/10439961/efficiently-create-a-density-plot-for-high-density-regions-points-for-sparse-re
     if df is None:
         df = pandas.DataFrame()
@@ -56,7 +56,7 @@ def density_scatter(x, y, df=None, ax=None, cor=True, diag=False, reg_family=Non
             df = df.loc[:,[x,y]].replace([numpy.inf, -numpy.inf], numpy.nan).dropna(axis=0)
     xval=df[x].astype(float)
     yval=df[y].astype(float)
-    bins = [100,100] # number of bins
+    bins = [num_bin,num_bin] # number of bins
     thresh = 3  #density threshold
     if hue_log:
         thresh = numpy.log2(thresh)
