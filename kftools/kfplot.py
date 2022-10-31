@@ -165,7 +165,7 @@ def hist_boxplot(x='', category='', df=pandas.DataFrame(), colors={}, xlim=[], b
     return ax
 
 def ols_annotations(x, y, data=None, ax=None, color='black', font_size=8, textxy=[0.05,0.95], textva='top',
-                    method='quantreg', stats=['N','slope','slope_p']):
+                    textha='left', method='quantreg', stats=['N','slope','slope_p']):
     import statsmodels.api as sm
     import statsmodels.formula.api as smf
     if data is None:
@@ -198,11 +198,10 @@ def ols_annotations(x, y, data=None, ax=None, color='black', font_size=8, textxy
             text += 'R2 = {}\n'.format('%.2f'%Decimal(rsquared))
         if stat=='rsquared_p':
             text += 'P = {}\n'.format('%.2E'%Decimal(rsquared_p))
-    ax.text(textxy[0], textxy[1], text, transform=ax.transAxes, va=textva, color=color, fontsize=font_size)
+    ax.text(textxy[0], textxy[1], text, transform=ax.transAxes, va=textva, ha=textha, color=color, fontsize=font_size)
     xmin = data.loc[:,x].min()
     xmax = data.loc[:,x].max()
     ax.plot(data[x].values[[0,N-1]], res.predict()[[0,N-1]], color=color)
-
 
 if __name__=="__main__":
     matplotlib.pyplot.interactive(False)
