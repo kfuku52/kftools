@@ -32,7 +32,7 @@ def stacked_barplot(x, y, data, colors, ax):
 
 def density_scatter(x, y, df=None, ax=None, cor=True, diag=False, reg_family=None, hue_log=False,
                     show_cor_p=True, plot_range='each', return_ims=False, vmin=None, vmax=None,
-                    cbar=True, cmap='jet', num_bin=20):
+                    cbar=True):
     # https://stackoverflow.com/questions/10439961/efficiently-create-a-density-plot-for-high-density-regions-points-for-sparse-re
     if df is None:
         df = pandas.DataFrame()
@@ -56,7 +56,7 @@ def density_scatter(x, y, df=None, ax=None, cor=True, diag=False, reg_family=Non
             df = df.loc[:,[x,y]].replace([numpy.inf, -numpy.inf], numpy.nan).dropna(axis=0)
     xval=df[x].astype(float)
     yval=df[y].astype(float)
-    bins = [num_bin,num_bin] # number of bins
+    bins = [100,100] # number of bins
     thresh = 3  #density threshold
     if hue_log:
         thresh = numpy.log2(thresh)
@@ -71,7 +71,7 @@ def density_scatter(x, y, df=None, ax=None, cor=True, diag=False, reg_family=Non
         xmax=numpy.ceil(xval.max())
         ymax=numpy.ceil(yval.max())
     xyrange=[[xmin,xmax],[ymin,ymax]]
-    hh, locx, locy = scipy.histogram2d(xval, yval, range=xyrange, bins=bins)
+    hh, locx, locy = numpy.histogram2d(xval, yval, range=xyrange, bins=bins)
     if hue_log:
         hh = numpy.log2(hh)
     posx = numpy.digitize(xval, locx)
@@ -81,8 +81,7 @@ def density_scatter(x, y, df=None, ax=None, cor=True, diag=False, reg_family=Non
     xdat1 = xval[ind][hhsub < thresh] # low density points
     ydat1 = yval[ind][hhsub < thresh]
     hh[hh < thresh] = numpy.nan # fill the areas with low density by NaNs
-    ims = ax.imshow(numpy.flipud(hh.T), cmap=cmap, extent=numpy.array(xyrange).flatten(),
-                    vmin=vmin, vmax=vmax, interpolation='none', origin='upper', aspect="auto")
+    ims = ax.imshow(numpy.flipud(hh.T),cmap='jet',extent=numpy.array(xyrange).flatten(), vmin=vmin, vmax=vmax, interpolation='none', origin='upper', aspect="auto")
     ax.plot(xdat1, ydat1, '.',color='darkblue')
     if cbar:
         cbar = matplotlib.pyplot.colorbar(mappable=ims, ax=ax, format=matplotlib.ticker.ScalarFormatter(useMathText=True))
@@ -165,7 +164,7 @@ def hist_boxplot(x='', category='', df=pandas.DataFrame(), colors={}, xlim=[], b
     return ax
 
 def ols_annotations(x, y, data=None, ax=None, color='black', font_size=8, textxy=[0.05,0.95], textva='top',
-                    textha='left', method='quantreg', stats=['N','slope','slope_p']):
+                    method='quantreg', stats=['N','slope','slope_p']):
     import statsmodels.api as sm
     import statsmodels.formula.api as smf
     if data is None:
@@ -198,10 +197,11 @@ def ols_annotations(x, y, data=None, ax=None, color='black', font_size=8, textxy
             text += 'R2 = {}\n'.format('%.2f'%Decimal(rsquared))
         if stat=='rsquared_p':
             text += 'P = {}\n'.format('%.2E'%Decimal(rsquared_p))
-    ax.text(textxy[0], textxy[1], text, transform=ax.transAxes, va=textva, ha=textha, color=color, fontsize=font_size)
+    ax.text(textxy[0], textxy[1], text, transform=ax.transAxes, va=textva, color=color, fontsize=font_size)
     xmin = data.loc[:,x].min()
     xmax = data.loc[:,x].max()
     ax.plot(data[x].values[[0,N-1]], res.predict()[[0,N-1]], color=color)
+
 
 if __name__=="__main__":
     matplotlib.pyplot.interactive(False)

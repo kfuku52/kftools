@@ -1,4 +1,8 @@
-import numpy, ete3, re
+import sys
+
+import ete3
+import numpy
+
 
 def get_tree_height(tree_file):
     tree = ete3.PhyloNode(tree_file, format=1)
@@ -44,7 +48,9 @@ def add_numerical_node_labels(tree):
     return(tree)
 
 def transfer_root(tree_to, tree_from, verbose=False):
-    assert len(set(tree_to.get_leaf_names()) - set(tree_from.get_leaf_names())) == 0
+    tip_set_diff = set(tree_to.get_leaf_names()) - set(tree_from.get_leaf_names())
+    if len(tip_set_diff) > 0:
+        raise Exception('tree_to has more tips than tree_from. tip_set_diff = '+str(tip_set_diff))
     subroot_leaves = [ n.get_leaf_names() for n in tree_from.get_children() ]
     is_n0_bigger_than_n1 = (len(subroot_leaves[0]) > len(subroot_leaves[1]))
     ingroups = subroot_leaves[0] if is_n0_bigger_than_n1 else subroot_leaves[1]
@@ -72,12 +78,26 @@ def transfer_root(tree_to, tree_from, verbose=False):
             break
     return tree_to
 
-def check_ultrametric(tree, tol=1e-2):
+def check_ultrametric(tree, tol=0):
     root2leaf_dist = [tree.get_distance(target=l) for l in tree.get_leaves()]
-    dif_tree_length = (max(root2leaf_dist) - min(root2leaf_dist))
+    leaf_names = tree.get_leaf_names()
+    min_dist = 999999999999999
+    max_dist = 0
+    for i in range(len(root2leaf_dist)):
+        if (root2leaf_dist[i] < min_dist):
+            min_dist = root2leaf_dist[i]
+            min_dist_leaf = leaf_names[i]
+        if (root2leaf_dist[i] > max_dist):
+            max_dist = root2leaf_dist[i]
+            max_dist_leaf = leaf_names[i]
+    if tol == 0:
+        tol = max_dist * 0.001
+    dif_tree_length = (max_dist - min_dist)
     is_ultrametric = dif_tree_length < tol
     if (dif_tree_length > tol):
-        print('(max - min) tree length (', dif_tree_length, ') was bigger than tol (', tol, ').')
+        sys.stderr.write('(max - min) root-to-tip path ({}) was bigger than tol ({}).\n'.format(dif_tree_length, tol))
+        sys.stderr.write('min_dist_leaf = {:,} in {}\n'.format(min_dist, min_dist_leaf))
+        sys.stderr.write('max_dist_leaf = {:,} in {}\n'.format(max_dist, max_dist_leaf))
     return is_ultrametric
 
 def taxonomic_annotation(tree):

@@ -1,71 +1,84 @@
-import ete3, numpy, pandas, re
-from kftools.kfexpression import *
-from kftools.kfphylo import *
-from kftools.kfutil import *
+import copy
+import re
 
-def nwk2table(tree, mode=['branch_length', 'branch_support', 'node_name'], age=False, parent=False, sister=False):
-    if (mode == 'branch_length'):
-        tree_format = 1
-        attr = 'dist'
-    elif (mode == 'branch_support'):
+import pandas
+
+from kfexpression import *
+from kfphylo import *
+from kfutil import *
+
+
+def nwk2table(tree, attr='', age=False, parent=False, sister=False):
+    if (attr == 'support'):
         tree_format = 0
-        attr = 'support'
-    elif (mode == 'node_name'):
+    else:
         tree_format = 1
-        attr = 'name'
-    cn = ["numerical_label", mode]
+    cn = ["numerical_label", attr]
     if type(tree) == str:
         tree = ete3.PhyloNode(tree, format=tree_format)
     elif type(tree) == ete3.PhyloNode:
         tree = tree
     tree = add_numerical_node_labels(tree)
-    df = pandas.DataFrame(0, index=range(0, len(list(tree.traverse()))), columns=cn)
+    df = pandas.DataFrame(numpy.nan, index=range(0, len(list(tree.traverse()))), columns=cn)
+    df['numerical_label'] = -999
+    dtype = type(getattr(tree.get_children()[0], attr))
+    df[attr] = df[attr].astype(dtype)
     row = 0
     for node in tree.traverse():
         df.loc[row, "numerical_label"] = node.numerical_label
-        df.loc[row, mode] = getattr(node, attr)
+        if attr in dir(node):
+            df.at[row, attr] = getattr(node, attr)
         row += 1
-    if (mode == 'branch_support'):
-        df.loc[df['branch_support'] == 1, 'branch_support'] = numpy.nan
-    if (mode == 'branch_length') & (age):
+    if (attr == 'dist') & (age):
         assert check_ultrametric(tree)
         df['age'] = numpy.nan
         for node in tree.traverse():
-            df.loc[(df['numerical_label'] == node.numerical_label), 'age'] = node.get_distance(
-                target=node.get_leaves()[0])
+            is_nn = (df['numerical_label'] == node.numerical_label)
+            df.loc[is_nn, 'age'] = node.get_distance(target=node.get_leaves()[0])
     if parent:
-        df['parent'] = -1
+        df.loc[:,'parent'] = -1
         for node in tree.traverse():
             if not node.is_root():
-                df.loc[(df['numerical_label'] == node.numerical_label), 'parent'] = node.up.numerical_label
+                is_nn = (df['numerical_label'] == node.numerical_label)
+                df.loc[is_nn, 'parent'] = node.up.numerical_label
     if sister:
-        df['sister'] = -1
+        df.loc[:,'sister'] = -1
         for node in tree.traverse():
             if not node.is_root():
-                df.loc[(df['numerical_label'] == node.numerical_label), 'sister'] = node.get_sisters()[
-                    0].numerical_label
-    df = df.sort_values(by='numerical_label', ascending=True)
-    return (df)
+                is_nn = (df['numerical_label'] == node.numerical_label)
+                df.loc[is_nn, 'sister'] = node.get_sisters()[0].numerical_label
+    df = df.sort_values(by='numerical_label', ascending=True).reset_index(drop=True)
+    return df
 
-def node_gene2species(gene_tree, species_tree):
-    gene_tree = add_numerical_node_labels(gene_tree)
-    assert check_ultrametric(gene_tree)
-    for leaf in gene_tree.iter_leaves():
+def node_gene2species(gene_tree, species_tree, is_ultrametric=False):
+    gene_tree2 = copy.deepcopy(gene_tree)
+    gene_tree2 = add_numerical_node_labels(gene_tree2)
+    if is_ultrametric:
+        assert check_ultrametric(gene_tree2)
+    for leaf in gene_tree2.iter_leaves():
         leaf_name_split = leaf.name.split("_")
         binom_name = leaf_name_split[0] + "_" + leaf_name_split[1]
         leaf.name = binom_name
-    assert set(gene_tree.get_leaf_names()) - set(species_tree.get_leaf_names()) == set()
-    cn = ["numerical_label", "spnode_coverage", 'spnode_age']
-    df = pandas.DataFrame(0, index=range(0, len(list(gene_tree.traverse()))), columns=cn)
-    df['spnode_coverage'] = numpy.nan
-    df['spnode_age'] = numpy.nan
+    tip_set_diff = set(gene_tree2.get_leaf_names()) - set(species_tree.get_leaf_names())
+    if len(tip_set_diff) != 0:
+        sys.stderr.write(f"Warning. A total of {len(tip_set_diff)} species are missing in the species tree: {str(tip_set_diff)}\n")
+    if is_ultrametric:
+        cn = ["numerical_label", "spnode_coverage", 'spnode_age']
+    else:
+        cn = ["numerical_label", "spnode_coverage"]
+    df = pandas.DataFrame(0, index=range(0, len(list(gene_tree2.traverse()))), columns=cn)
+    if is_ultrametric:
+        df['spnode_age'] = ''
+        df['spnode_coverage'] = ''
+    else:
+        df['spnode_coverage'] = ''
     row = 0
-    for gn in gene_tree.traverse(strategy="postorder"):
+    for gn in gene_tree2.traverse(strategy="postorder"):
         flag1 = 0
         flag2 = 0
         gnspp = set(gn.get_leaf_names())
         gn_age = gn.get_distance(target=gn.get_leaves()[0])
-        df.loc[row, "numerical_label"] = gn.numerical_label
+        df.at[row, "numerical_label"] = gn.numerical_label
         for sn in species_tree.traverse(strategy="postorder"):
             snspp = set(sn.get_leaf_names())
             sn_age = sn.get_distance(target=sn.get_leaves()[0])
@@ -74,13 +87,17 @@ def node_gene2species(gene_tree, species_tree):
             else:
                 sn_up_age = sn.up.get_distance(target=sn.up.get_leaves()[0])
             if (len(gnspp - snspp) == 0) & (flag1 == 0):
-                df.loc[row, 'spnode_coverage'] = sn.name.replace('\'', '')
+                df.at[row, 'spnode_coverage'] = sn.name.replace('\'', '')
                 flag1 = 1
-            if (gn_age >= sn_age) & (gn_age < sn_up_age) & (len(gnspp - snspp) == 0) & (flag2 == 0):
-                df.loc[row, 'spnode_age'] = sn.name.replace('\'', '')
+            if (gn_age >= sn_age) & (gn_age < sn_up_age) & (len(gnspp - snspp) == 0) & (flag2 == 0) & (is_ultrametric):
+                df.at[row, 'spnode_age'] = sn.name.replace('\'', '')
                 flag2 = 1
-            if (flag1 == 1) & (flag2 == 1):
-                break
+            if is_ultrametric:
+                if (flag1 == 1) & (flag2 == 1):
+                    break
+            else:
+                if (flag1 == 1):
+                    break
         row += 1
     return df
 
@@ -89,7 +106,7 @@ def ou2table(regime_file, leaf_file, input_tree_file):
     df_leaf = pandas.read_csv(leaf_file, sep="\t")
     tree = ete3.PhyloNode(input_tree_file, format=1)
     tree = add_numerical_node_labels(tree)
-    tissues = df_leaf.columns[3:]
+    tissues = df_leaf.columns[3:].values
     if ('expectations' in df_leaf['param'].values):
         df_leaf.loc[(df_leaf['param'] == 'expectations'), 'param'] = 'mu'
     cn1 = ["numerical_label", "regime", "is_shift", "num_child_shift"]
@@ -98,15 +115,16 @@ def ou2table(regime_file, leaf_file, input_tree_file):
     cn = cn1 + cn2 + cn3
     df = pandas.DataFrame(0, index=range(0, len(list(tree.traverse()))), columns=cn)
     for node in tree.traverse():
-        node.regime = 0
+        node.regime = 0 # initialize
     for node in tree.traverse():
         if node.name in df_regime.loc[:, "node_name"].fillna(value="placeholder_text").values:
             regime_nos = df_regime.loc[df_regime.node_name.values == node.name, "regime"]
             regime_no = int(regime_nos.iloc[0])
             for sub_node in node.traverse():
                 sub_node.regime = regime_no
-    df_leaf_unique = df_leaf.loc[
-        df_leaf['param'] == 'mu', df_leaf.columns[[c not in ['label', 'param'] for c in df_leaf.columns]]]
+    is_mu = (df_leaf['param'] == 'mu')
+    is_cols = [c not in ['node_name', 'param'] for c in df_leaf.columns]
+    df_leaf_unique = df_leaf.loc[is_mu, df_leaf.columns[is_cols]]
     df_leaf_unique = df_leaf_unique.drop_duplicates()
     df_leaf_unique = df_leaf_unique.groupby(by='regime').mean()
     df_leaf_unique = df_leaf_unique.reset_index()
@@ -162,12 +180,14 @@ def get_misc_node_statistics(tree_file, tax_annot=False):
     cn2 = ["parent", "sister", "child1", "child2", "so_event_parent"]
     cn = cn1 + cn2
     df = pandas.DataFrame(0, index=range(0, len(list(tree.traverse()))), columns=cn)
+    df.loc[:, 'dup_conf_score'] = df.loc[:, 'dup_conf_score'].astype(float)
     df.loc[:, "parent"] = -999
     df.loc[:, "sister"] = -999
     df.loc[:, "child1"] = -999
     df.loc[:, "child2"] = -999
     df.loc[:, "so_event"] = "L"
     df.loc[:, "so_event_parent"] = "S"
+    df['taxon'] = df['taxon'].astype('str')
     if tax_annot:
         tree = taxonomic_annotation(tree)
     else:
@@ -179,32 +199,32 @@ def get_misc_node_statistics(tree_file, tax_annot=False):
                 node.sci_name = ''
     row = 0
     for node in tree.traverse():
-        df.loc[row, "numerical_label"] = node.numerical_label
-        df.loc[row, "taxon"] = node.sci_name
-        df.loc[row, "taxid"] = node.taxid
-        df.loc[row, "num_sp"] = len(set([leaf.sci_name for leaf in node.iter_leaves()]))
-        df.loc[row, "num_leaf"] = len(list(node.get_leaves()))
+        df.at[row, "numerical_label"] = node.numerical_label
+        df.at[row, "taxon"] = node.sci_name
+        df.at[row, "taxid"] = node.taxid
+        df.at[row, "num_sp"] = len(set([leaf.sci_name for leaf in node.iter_leaves()]))
+        df.at[row, "num_leaf"] = len(list(node.get_leaves()))
         if hasattr(node.up, "numerical_label"):
-            df.loc[row, "parent"] = node.up.numerical_label
+            df.at[row, "parent"] = node.up.numerical_label
         sister = node.get_sisters()
         if len(sister) == 1:
-            df.loc[row, "sister"] = sister[0].numerical_label
+            df.at[row, "sister"] = sister[0].numerical_label
         if not node.is_leaf():
-            df.loc[row, "child1"] = node.children[0].numerical_label
-            df.loc[row, "child2"] = node.children[1].numerical_label
+            df.at[row, "child1"] = node.children[0].numerical_label
+            df.at[row, "child2"] = node.children[1].numerical_label
             sp_child1 = set([leaf.sci_name for leaf in node.children[0].iter_leaves()])
             sp_child2 = set([leaf.sci_name for leaf in node.children[1].iter_leaves()])
             num_union = len(sp_child1.union(sp_child2))
             num_intersection = len(sp_child1.intersection(sp_child2))
             node.dup_conf_score = num_intersection / num_union
-            df.loc[row, "dup_conf_score"] = node.dup_conf_score
+            df.at[row, "dup_conf_score"] = node.dup_conf_score
             if node.dup_conf_score > 0:
-                df.loc[row, "so_event"] = "D"
+                df.at[row, "so_event"] = "D"
             elif node.dup_conf_score == 0:
-                df.loc[row, "so_event"] = "S"
+                df.at[row, "so_event"] = "S"
         if not isinstance(node.up, type(None)):
             if (node.up.dup_conf_score > 0):
-                df.loc[row, "so_event_parent"] = "D"
+                df.at[row, "so_event_parent"] = "D"
         row += 1
     return (df)
 
