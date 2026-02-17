@@ -1,23 +1,20 @@
-import scipy.stats
-import numpy
 import math
+
+import numpy
+import scipy.stats
+
 
 def _calc_S2(R, Ri, Ravr):
     # Copyright (C) 2016 Yukishige Shibata <y-shibat@mtd.biglobe.ne.jp>
     # All rights reserved.
-    num_elem = len(Ri)
+    R = numpy.asarray(R, dtype=float)
+    Ri = numpy.asarray(Ri, dtype=float)
     if len(Ri) != len(R):
-        raise "number of lements in sample and its rank must be same."
+        raise ValueError("number of elements in sample and its rank must be same.")
 
-    s = 0.0
-    i = 0
-    while i < num_elem:
-        v = (R[i] - Ri[i] - Ravr + (1.0 * num_elem + 1) / 2)
-        v2 = v * v
-        s += v2
-        i += 1
-
-    return s / (num_elem - 1)
+    num_elem = Ri.size
+    v = R - Ri - Ravr + (num_elem + 1.0) / 2.0
+    return float(numpy.dot(v, v) / (num_elem - 1))
 
 
 def bm_test(x, y, ttype=0, alpha=0.05):
@@ -41,23 +38,19 @@ def bm_test(x, y, ttype=0, alpha=0.05):
       http://oku.edu.mie-u.ac.jp/~okumura/stat/brunner-munzel.html
     """
 
-    N_x = len(x)
-    N_y = len(y)
+    x = numpy.asarray(x, dtype=float)
+    y = numpy.asarray(y, dtype=float)
+    N_x = x.size
+    N_y = y.size
 
-    if isinstance(x, numpy.ndarray):
-        x = x.tolist()
-    if isinstance(x, numpy.ndarray):
-        y = y.tolist()
-
-    cat_x_y = list(x)
-    cat_x_y.extend(y)
+    cat_x_y = numpy.concatenate([x, y])
 
     R_total = scipy.stats.rankdata(cat_x_y, method='average')
     R_x = R_total[:N_x]
     R_y = R_total[N_x:]
 
-    Ravr_x = sum(R_x) / N_x
-    Ravr_y = sum(R_y) / N_y
+    Ravr_x = float(numpy.mean(R_x))
+    Ravr_y = float(numpy.mean(R_y))
 
     Pest = (Ravr_y - Ravr_x) / (N_x + N_y) + 0.5
 
@@ -76,7 +69,9 @@ def bm_test(x, y, ttype=0, alpha=0.05):
     f_hat_den = (nS2_x * nS2_x) / (N_x - 1) + (nS2_y * nS2_y) / (N_y - 1)
     f_hat = f_hat_num / f_hat_den
 
-    int_t = scipy.stats.t.ppf(1 - (alpha/2), f_hat) * math.sqrt((S2_x / (N_x * N_y * N_y)) + (S2_y / (N_x * N_x * N_y)))
+    int_t = scipy.stats.t.ppf(1 - (alpha / 2), f_hat) * math.sqrt(
+        (S2_x / (N_x * N_y * N_y)) + (S2_y / (N_x * N_x * N_y))
+    )
     C_l = Pest - int_t
     C_h = Pest + int_t
 
@@ -85,14 +80,10 @@ def bm_test(x, y, ttype=0, alpha=0.05):
     elif ttype > 0:
         p_value = 1 - scipy.stats.t.cdf(W, f_hat)
     else:
-        pt_g = scipy.stats.t.cdf(abs(W), f_hat)
-        pt_l = 1 - scipy.stats.t.cdf(abs(W), f_hat)
-        if pt_g < pt_l:
-            p_value = 2 * pt_g
-        else:
-            p_value = 2 * pt_l
+        pt = scipy.stats.t.cdf(abs(W), f_hat)
+        p_value = 2 * min(pt, 1 - pt)
 
-    return (W, f_hat, p_value, Pest, C_l, C_h)
+    return W, f_hat, p_value, Pest, C_l, C_h
 
 
 def brunner_munzel_test(x, y, alternative="two_sided"):
@@ -121,30 +112,27 @@ def brunner_munzel_test(x, y, alternative="two_sided"):
     x = numpy.ma.asarray(x).compressed().view(numpy.ndarray)
     y = numpy.ma.asarray(y).compressed().view(numpy.ndarray)
     ranks = scipy.stats.rankdata(numpy.concatenate([x, y]))
-    (nx, ny) = (len(x), len(y))
+    nx, ny = len(x), len(y)
     rankx = scipy.stats.rankdata(x)
     ranky = scipy.stats.rankdata(y)
     rank_mean1 = numpy.mean(ranks[0:nx])
     rank_mean2 = numpy.mean(ranks[nx:nx + ny])
-    pst = (rank_mean2 - (ny + 1) / 2) / nx
-    v1_set = [(i - j - rank_mean1 + (nx + 1) / 2) ** 2 for (i, j) in zip(ranks[0:nx], rankx)]
-    v2_set = [(i - j - rank_mean2 + (ny + 1) / 2) ** 2 for (i, j) in zip(ranks[nx:nx + ny], ranky)]
-    v1 = numpy.sum(v1_set) / (nx - 1)
-    v2 = numpy.sum(v2_set) / (ny - 1)
+    v1 = numpy.sum((ranks[0:nx] - rankx - rank_mean1 + (nx + 1) / 2) ** 2) / (nx - 1)
+    v2 = numpy.sum((ranks[nx:nx + ny] - ranky - rank_mean2 + (ny + 1) / 2) ** 2) / (ny - 1)
     statistic = nx * ny * (rank_mean2 - rank_mean1) / (nx + ny) / numpy.sqrt(nx * v1 + ny * v2)
     dfbm = ((nx * v1 + ny * v2) ** 2) / (((nx * v1) ** 2) / (nx - 1) + ((ny * v2) ** 2) / (ny - 1))
-    if ((alternative == "greater") | (alternative == "g")):
+    if alternative in ("greater", "g"):
         prob = scipy.stats.t.cdf(statistic, dfbm)
-    elif ((alternative == "less") | (alternative == "l")):
+    elif alternative in ("less", "l"):
         prob = 1 - scipy.stats.t.cdf(statistic, dfbm)
     else:
-        alternative = "two_sided"
         abst = numpy.abs(statistic)
         prob = scipy.stats.t.cdf(abst, dfbm)
         prob = 2 * min(prob, 1 - prob)
     return statistic, prob
 
-if __name__=="__main__":
+
+if __name__ == "__main__":
     x = numpy.random.normal(loc=0, scale=1, size=10000)
     y = x + numpy.random.normal(loc=1, scale=1, size=10000)
     out = brunner_munzel_test(x=x, y=y, alternative="two_sided")

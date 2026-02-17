@@ -1,17 +1,24 @@
 import numpy
 
+
 def calc_complementarity(array1, array2):
-    sum_dif = float()
-    for item1, item2 in zip(array1, array2):
-        if (item1 == item2):
-            sum_dif += 0
-        else:
-            if item1 > item2:
-                sum_dif += (item1 - item2) / item1
-            else:
-                sum_dif += (item2 - item1) / item2
-    normalized_dif = sum_dif / len(array1)
-    return (normalized_dif)
+    arr1 = numpy.asarray(array1, dtype=float).reshape(-1)
+    arr2 = numpy.asarray(array2, dtype=float).reshape(-1)
+    denom = arr1.size
+    if denom == 0:
+        raise ZeroDivisionError("array1 must contain at least one value")
+    n = min(arr1.size, arr2.size)
+    if n == 0:
+        return 0.0
+    arr1 = arr1[:n]
+    arr2 = arr2[:n]
+    max_values = numpy.maximum(arr1, arr2)
+    abs_diff = numpy.abs(arr1 - arr2)
+    with numpy.errstate(divide='ignore', invalid='ignore'):
+        rel_diff = numpy.divide(abs_diff, max_values, out=numpy.zeros_like(abs_diff), where=(max_values != 0))
+    normalized_dif = rel_diff.sum() / denom
+    return float(normalized_dif)
+
 
 def calc_tau(df, columns, unlog2=True, unPlus1=True):
     if unlog2:
@@ -20,7 +27,7 @@ def calc_tau(df, columns, unlog2=True, unPlus1=True):
             x = x - 1
         x = x.clip(lower=0).values
     else:
-        x = df.loc[:, columns]
+        x = df.loc[:, columns].values
     xmax = x.max(axis=1).reshape(x.shape[0], 1)
     xadj = 1 - (x / xmax)
     xadj = numpy.nan_to_num(xadj)

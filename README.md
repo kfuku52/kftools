@@ -1,3 +1,8 @@
+# kftools
+
+[![Tests](https://github.com/kfuku52/kftools/actions/workflows/tests.yml/badge.svg?branch=master)](https://github.com/kfuku52/kftools/actions/workflows/tests.yml)
+[![License](https://img.shields.io/github/license/kfuku52/kftools)](LICENSE)
+
 ## Overview
 
 **kftools** is a python package with miscellaneous functions mainly for evolutionary genomics.
@@ -13,5 +18,4 @@ pip install git+https://github.com/kfuku52/kftools
 ```
 
 ## Licensing
-This program is BSD-licensed (3 clause). See [LICENSE](LICENSE) for details.
-
+This program is MIT-licensed. See [LICENSE](LICENSE) for details.
