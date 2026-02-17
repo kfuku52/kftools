@@ -3,16 +3,15 @@ import gzip
 import re
 import sys
 
-import ete3
 import numpy
 import pandas
 
 try:
     from .kfexpression import calc_complementarity, calc_tau
-    from .kfphylo import add_numerical_node_labels, check_ultrametric, taxonomic_annotation
+    from .kfphylo import add_numerical_node_labels, check_ultrametric, load_phylo_tree, taxonomic_annotation
 except ImportError:
     from kfexpression import calc_complementarity, calc_tau
-    from kfphylo import add_numerical_node_labels, check_ultrametric, taxonomic_annotation
+    from kfphylo import add_numerical_node_labels, check_ultrametric, load_phylo_tree, taxonomic_annotation
 
 NOTUNG_OPT_ROOT_RE = re.compile(r"Number of optimal roots: ([0-9]+) out of ([0-9]+)")
 NOTUNG_BEST_SCORE_RE = re.compile(r"Best rooting score: (\d*[.,]?\d*), worst rooting score: (\d*[.,]?\d*)")
@@ -22,17 +21,18 @@ ROOT_POSITIONS_PREFIX = "root positions with rho peak: "
 
 def nwk2table(tree, attr='', age=False, parent=False, sister=False):
     tree_format = 0 if attr == 'support' else 1
-    if isinstance(tree, str):
-        tree = ete3.PhyloNode(tree, format=tree_format)
+    if not hasattr(tree, "traverse"):
+        tree = load_phylo_tree(tree, parser=tree_format)
     tree = add_numerical_node_labels(tree)
     nodes = list(tree.traverse())
     n_nodes = len(nodes)
     age_values = numpy.empty(n_nodes, dtype=float) if ((attr == 'dist') and age) else None
     if age_values is not None:
-        assert check_ultrametric(tree)
+        if not check_ultrametric(tree):
+            raise ValueError("Tree must be ultrametric when age=True and attr='dist'")
         for node in tree.traverse(strategy="postorder"):
             label = node.numerical_label
-            if node.is_leaf():
+            if node.is_leaf:
                 age_values[label] = 0.0
             else:
                 first_child = node.children[0]
@@ -55,15 +55,17 @@ def nwk2table(tree, attr='', age=False, parent=False, sister=False):
             attr_values[label] = getattr(node, attr)
         else:
             attr_values[label] = getattr(node, attr) if hasattr(node, attr) else numpy.nan
-        if parent_values is not None and (not node.is_root()):
+        if parent_values is not None and (not node.is_root):
             parent_values[label] = node.up.numerical_label
-        if sister_values is not None and (not node.is_root()):
+        if sister_values is not None and (not node.is_root):
             siblings = node.up.children
             if len(siblings) == 2:
                 sister_node = siblings[1] if siblings[0] is node else siblings[0]
                 sister_values[label] = sister_node.numerical_label
             else:
-                sister_values[label] = node.get_sisters()[0].numerical_label
+                sister_nodes = node.get_sisters()
+                if len(sister_nodes) > 0:
+                    sister_values[label] = sister_nodes[0].numerical_label
 
     data = {'numerical_label': numpy.arange(n_nodes, dtype=numpy.int64)}
     data[attr] = attr_values
@@ -77,15 +79,21 @@ def nwk2table(tree, attr='', age=False, parent=False, sister=False):
     return df
 
 def node_gene2species(gene_tree, species_tree, is_ultrametric=False):
+    if not hasattr(gene_tree, "traverse"):
+        gene_tree = load_phylo_tree(gene_tree, parser=1)
+    if not hasattr(species_tree, "traverse"):
+        species_tree = load_phylo_tree(species_tree, parser=1)
     gene_tree2 = copy.deepcopy(gene_tree)
     gene_tree2 = add_numerical_node_labels(gene_tree2)
-    if is_ultrametric:
-        assert check_ultrametric(gene_tree2)
-    for leaf in gene_tree2.iter_leaves():
+    if is_ultrametric and (not check_ultrametric(gene_tree2)):
+        raise ValueError("gene_tree must be ultrametric when is_ultrametric=True")
+    for leaf in gene_tree2.leaves():
         leaf_name_split = leaf.name.split("_", 2)
+        if len(leaf_name_split) < 2:
+            raise ValueError(f"Gene leaf name must contain species information with '_': {leaf.name}")
         binom_name = leaf_name_split[0] + "_" + leaf_name_split[1]
         leaf.name = binom_name
-    tip_set_diff = set(gene_tree2.get_leaf_names()) - set(species_tree.get_leaf_names())
+    tip_set_diff = set(gene_tree2.leaf_names()) - set(species_tree.leaf_names())
     if tip_set_diff:
         sys.stderr.write(f"Warning. A total of {len(tip_set_diff)} species are missing in the species tree: {str(tip_set_diff)}\n")
     if is_ultrametric:
@@ -93,22 +101,22 @@ def node_gene2species(gene_tree, species_tree, is_ultrametric=False):
     else:
         cn = ["numerical_label", "spnode_coverage"]
     species_nodes = list(species_tree.traverse(strategy="postorder"))
-    species_names = {sn: sn.name.replace('\'', '') for sn in species_nodes}
-    species_leaf_node = {leaf.name: leaf for leaf in species_tree.iter_leaves()}
+    species_names = {sn: (sn.name or '').replace('\'', '') for sn in species_nodes}
+    species_leaf_node = {leaf.name: leaf for leaf in species_tree.leaves()}
     species_depth = {}
     for sn in species_tree.traverse(strategy="preorder"):
-        species_depth[sn] = 0 if sn.is_root() else (species_depth[sn.up] + 1)
+        species_depth[sn] = 0 if sn.is_root else (species_depth[sn.up] + 1)
     if is_ultrametric:
         species_age = {}
         for sn in species_nodes:
-            if sn.is_leaf():
+            if sn.is_leaf:
                 species_age[sn] = 0.0
             else:
                 first_child = sn.children[0]
                 species_age[sn] = species_age[first_child] + first_child.dist
         species_up_age = {}
         for sn in species_nodes:
-            if sn.is_root():
+            if sn.is_root:
                 species_up_age[sn] = numpy.inf
             else:
                 species_up_age[sn] = species_age[sn.up]
@@ -144,7 +152,7 @@ def node_gene2species(gene_tree, species_tree, is_ultrametric=False):
     if is_ultrametric:
         gene_age = {}
     for gn in gene_nodes:
-        if gn.is_leaf():
+        if gn.is_leaf:
             covered_species_node = species_leaf_node.get(gn.name)
             gene_coverage[gn] = covered_species_node
             gene_has_missing_species[gn] = covered_species_node is None
@@ -190,7 +198,7 @@ def node_gene2species(gene_tree, species_tree, is_ultrametric=False):
 def ou2table(regime_file, leaf_file, input_tree_file):
     df_regime = pandas.read_csv(regime_file, sep="\t")
     df_leaf = pandas.read_csv(leaf_file, sep="\t")
-    tree = ete3.PhyloNode(input_tree_file, format=1)
+    tree = load_phylo_tree(input_tree_file, parser=1)
     tree = add_numerical_node_labels(tree)
     nodes = list(tree.traverse())
     num_nodes = len(nodes)
@@ -210,7 +218,7 @@ def ou2table(regime_file, leaf_file, input_tree_file):
         if node_name not in regime_map:
             regime_map[node_name] = int(regime)
     for node in tree.traverse(strategy="preorder"):
-        if node.is_root():
+        if node.is_root:
             node.regime = regime_map.get(node.name, 0)
         else:
             node.regime = regime_map.get(node.name, node.up.regime)
@@ -224,6 +232,10 @@ def ou2table(regime_file, leaf_file, input_tree_file):
         regime: values
         for regime, values in zip(mu_table.index.to_numpy(), mu_table.to_numpy())
     }
+    observed_regimes = {node.regime for node in nodes}
+    missing_regimes = sorted(regime for regime in observed_regimes if regime not in mu_by_regime)
+    if missing_regimes:
+        raise ValueError(f"Missing mu values for regime IDs: {missing_regimes}")
 
     numerical_label = numpy.empty(num_nodes, dtype=numpy.int64)
     regime = numpy.empty(num_nodes, dtype=numpy.int64)
@@ -234,17 +246,19 @@ def ou2table(regime_file, leaf_file, input_tree_file):
     shift_pairs = []
     for row_idx, node in enumerate(nodes):
         node_label = node.numerical_label
-        shift_flag = int((not node.is_root()) and (node.regime != node.up.regime))
+        shift_flag = int((not node.is_root) and (node.regime != node.up.regime))
         numerical_label[row_idx] = node_label
         regime[row_idx] = node.regime
         is_shift[row_idx] = shift_flag
         mu_values[row_idx, :] = mu_by_regime[node.regime]
-        parent_labels[row_idx] = -1 if node.is_root() else node.up.numerical_label
-        if not node.is_leaf():
+        parent_labels[row_idx] = -1 if node.is_root else node.up.numerical_label
+        if not node.is_leaf:
             children = node.get_children()
-            num_child_shift[row_idx] = int(node.regime != children[0].regime) + int(node.regime != children[1].regime)
+            num_child_shift[row_idx] = sum(int(node.regime != child.regime) for child in children)
         if shift_flag:
-            shift_pairs.append((node_label, node.get_sisters()[0].numerical_label))
+            sisters = node.get_sisters()
+            if len(sisters) > 0:
+                shift_pairs.append((node_label, sisters[0].numerical_label))
 
     df = pandas.DataFrame(
         {
@@ -282,7 +296,7 @@ def ou2table(regime_file, leaf_file, input_tree_file):
     return df.loc[:, cn]
 
 def get_misc_node_statistics(tree_file, tax_annot=False):
-    tree = ete3.PhyloNode(tree_file, format=1)
+    tree = load_phylo_tree(tree_file, parser=1)
     tree = add_numerical_node_labels(tree)
     cn1 = ["numerical_label", "taxon", "taxid", "num_sp", "num_leaf", "so_event", "dup_conf_score"]
     cn2 = ["parent", "sister", "child1", "child2", "so_event_parent"]
@@ -293,7 +307,7 @@ def get_misc_node_statistics(tree_file, tax_annot=False):
     else:
         for node in nodes:
             node.taxid = -999
-            if node.is_leaf():
+            if node.is_leaf:
                 name_split = node.name.split('_', 2)
                 if len(name_split) >= 2:
                     node.sci_name = name_split[0] + ' ' + name_split[1]
@@ -307,7 +321,7 @@ def get_misc_node_statistics(tree_file, tax_annot=False):
     num_leaf_by_node = {}
     dup_conf_score_by_node = {}
     for node in tree.traverse(strategy="postorder"):
-        if node.is_leaf():
+        if node.is_leaf:
             species_id = species_index.setdefault(node.sci_name, len(species_index))
             species_mask_by_node[node] = (1 << species_id)
             num_leaf_by_node[node] = 1
@@ -366,7 +380,7 @@ def get_misc_node_statistics(tree_file, tax_annot=False):
                 sister_nodes = node.get_sisters()
                 if len(sister_nodes) == 1:
                     sister[row_idx] = sister_nodes[0].numerical_label
-        if not node.is_leaf():
+        if not node.is_leaf:
             if len(node.children) >= 1:
                 child1[row_idx] = node.children[0].numerical_label
             if len(node.children) >= 2:

@@ -1,8 +1,11 @@
 import gzip
+import io
 import tempfile
 import unittest
+import contextlib
+from pathlib import Path
 
-import ete3
+import ete4
 import matplotlib
 import numpy
 import pandas
@@ -33,17 +36,64 @@ class TestKFToolsSmoke(unittest.TestCase):
         self.assertAlmostEqual(kfexpression.calc_complementarity([1, 2, 3], [1]), 0.0)
 
     def test_kfphylo(self):
-        tree = ete3.PhyloNode("((A:1,B:1):2,C:3);", format=1)
+        tree = ete4.PhyloTree("((A:1,B:1):2,C:3);", parser=1)
         out = kfphylo.add_numerical_node_labels(tree)
         labels = [node.numerical_label for node in out.traverse()]
         self.assertEqual(len(labels), len(set(labels)))
         self.assertTrue(kfphylo.check_ultrametric(tree))
 
+    def test_kfphylo_load_phylo_tree(self):
+        newick = "((A:1,B:1):2,C:3);"
+        tree_from_newick = kfphylo.load_phylo_tree(newick, parser=1)
+        self.assertEqual(set(tree_from_newick.leaf_names()), {"A", "B", "C"})
+        with tempfile.NamedTemporaryFile("w", delete=False) as tmp:
+            tree_path = Path(tmp.name)
+            tmp.write(newick)
+        try:
+            tree_from_path = kfphylo.load_phylo_tree(tree_path, parser=1)
+            self.assertEqual(set(tree_from_path.leaf_names()), {"A", "B", "C"})
+        finally:
+            import os
+            os.unlink(tree_path)
+        with tempfile.NamedTemporaryFile("w", delete=False) as tmp:
+            empty_tree_path = Path(tmp.name)
+        try:
+            with self.assertRaisesRegex(ValueError, "empty"):
+                kfphylo.load_phylo_tree(empty_tree_path, parser=1)
+        finally:
+            import os
+            os.unlink(empty_tree_path)
+        with self.assertRaises(ValueError):
+            kfphylo.load_phylo_tree(None, parser=1)
+        with self.assertRaises(ValueError):
+            kfphylo.load_phylo_tree("   ", parser=1)
+        with self.assertRaises(TypeError):
+            kfphylo.load_phylo_tree(123, parser=1)
+        with self.assertRaisesRegex(ValueError, "not a file"):
+            kfphylo.load_phylo_tree(Path("."), parser=1)
+
     def test_kfphylo_transfer_root(self):
-        tree_from = ete3.PhyloNode("((A:1,B:1):2,(C:1,D:1):2);", format=1)
-        tree_to = ete3.PhyloNode("((A:1,C:1):2,(B:1,D:1):2);", format=1)
+        tree_from = ete4.PhyloTree("((A:1,B:1):2,(C:1,D:1):2);", parser=1)
+        tree_to = ete4.PhyloTree("((A:1,C:1):2,(B:1,D:1):2);", parser=1)
         out = kfphylo.transfer_root(tree_to=tree_to, tree_from=tree_from)
-        self.assertEqual(set(out.get_leaf_names()), set(tree_from.get_leaf_names()))
+        self.assertEqual(set(out.leaf_names()), set(tree_from.leaf_names()))
+
+    def test_kfphylo_transfer_root_requires_bifurcating_root(self):
+        tree_from = "(A:1,B:1,C:1);"
+        tree_to = "((A:1,B:1):1,C:2);"
+        with self.assertRaisesRegex(ValueError, "bifurcating"):
+            kfphylo.transfer_root(tree_to=tree_to, tree_from=tree_from)
+
+    def test_kfphylo_transfer_internal_node_names_requires_same_topology(self):
+        tree_from = "((A:1,B:1):2,(C:1,D:1):2);"
+        tree_to = "((A:1,C:1):2,(B:1,D:1):2);"
+        with self.assertRaisesRegex(ValueError, "RF distance"):
+            kfphylo.transfer_internal_node_names(tree_to=tree_to, tree_from=tree_from)
+
+    def test_kfphylo_taxonomic_annotation_validates_leaf_names(self):
+        tree = ete4.PhyloTree("(A:1,B_c:1);", parser=1)
+        with self.assertRaisesRegex(ValueError, "genus and species"):
+            kfphylo.taxonomic_annotation(tree)
 
     def test_kfseq(self):
         codon_freqs = {"AAA": 0.5, "TTT": 0.5}
@@ -51,7 +101,7 @@ class TestKFToolsSmoke(unittest.TestCase):
         self.assertEqual(len(out), 3)
         with self.assertRaises(ValueError):
             kfseq.codon2nuc_freqs(codon_freqs=codon_freqs, model="HKY")
-        tree = ete3.PhyloNode("(A:2,B:1);", format=1)
+        tree = ete4.PhyloTree("(A:2,B:1);", parser=1)
         subroot_thetas = {
             "A": [{"theta": 0.1, "theta1": 0.3, "theta2": 0.7}] * 3,
             "B": [{"theta": 0.9, "theta1": 0.7, "theta2": 0.3}] * 3,
@@ -60,7 +110,7 @@ class TestKFToolsSmoke(unittest.TestCase):
         self.assertEqual(len(root_thetas), 3)
         self.assertAlmostEqual(root_thetas[0]["theta"], 0.1 + (0.9 - 0.1) * (2.0 / 3.0))
 
-        tree3 = ete3.PhyloNode("(A:1,B:2,C:3);", format=1)
+        tree3 = ete4.PhyloTree("(A:1,B:2,C:3);", parser=1)
         subroot_thetas3 = {
             "A": [{"theta": 0.1}] * 3,
             "B": [{"theta": 0.5}] * 3,
@@ -78,6 +128,23 @@ class TestKFToolsSmoke(unittest.TestCase):
         self.assertIn("parent", df2.columns)
         self.assertIn("sister", df2.columns)
         self.assertEqual(df2["numerical_label"].tolist(), sorted(df2["numerical_label"].tolist()))
+
+    def test_kfog_nwk2table_age_requires_ultrametric(self):
+        non_ultrametric = "((A_a:1,B_b:2):1,C_c:2);"
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaisesRegex(ValueError, "ultrametric"):
+                kfog.nwk2table(non_ultrametric, attr="dist", age=True)
+
+    def test_kfog_nwk2table_pathlike_input(self):
+        with tempfile.NamedTemporaryFile("w", delete=False) as tmp:
+            tree_path = Path(tmp.name)
+            tmp.write("((A_a:1,B_b:1):1,C_c:2);")
+        try:
+            df = kfog.nwk2table(tree_path, attr="dist")
+            self.assertGreater(len(df), 0)
+        finally:
+            import os
+            os.unlink(tree_path)
 
     def test_kfog_misc_node_statistics(self):
         with tempfile.NamedTemporaryFile("w", delete=False) as tmp:
@@ -107,12 +174,18 @@ class TestKFToolsSmoke(unittest.TestCase):
             os.unlink(path)
 
     def test_kfog_node_gene2species_ultrametric(self):
-        species_tree = ete3.PhyloNode("((A_x:1,B_x:1):1,(C_x:1,D_x:1):1);", format=1)
-        gene_tree = ete3.PhyloNode("((A_x_g1:1,B_x_g2:1):1,(C_x_g3:1,D_x_g4:1):1);", format=1)
+        species_tree = ete4.PhyloTree("((A_x:1,B_x:1):1,(C_x:1,D_x:1):1);", parser=1)
+        gene_tree = ete4.PhyloTree("((A_x_g1:1,B_x_g2:1):1,(C_x_g3:1,D_x_g4:1):1);", parser=1)
         out = kfog.node_gene2species(gene_tree, species_tree, is_ultrametric=True)
         self.assertIn("spnode_coverage", out.columns)
         self.assertIn("spnode_age", out.columns)
         self.assertEqual(len(out), len(list(gene_tree.traverse())))
+
+    def test_kfog_node_gene2species_validates_gene_leaf_name(self):
+        species_tree = "((A_x:1,B_x:1):1,C_x:2);"
+        gene_tree = "((A_x_g1:1,Bx:1):1,C_x_g3:2);"
+        with self.assertRaisesRegex(ValueError, "Gene leaf name"):
+            kfog.node_gene2species(gene_tree, species_tree, is_ultrametric=False)
 
     def test_kfog_ou2table(self):
         with tempfile.NamedTemporaryFile("w", delete=False) as regime_tmp:
@@ -133,7 +206,28 @@ class TestKFToolsSmoke(unittest.TestCase):
             self.assertIn("tau", out.columns)
             self.assertIn("delta_tau", out.columns)
             self.assertIn("mu_t1", out.columns)
-            self.assertEqual(out.shape[0], len(list(ete3.PhyloNode(tree_path, format=1).traverse())))
+            self.assertEqual(out.shape[0], len(list(kfphylo.load_phylo_tree(tree_path, parser=1).traverse())))
+        finally:
+            import os
+            os.unlink(regime_path)
+            os.unlink(leaf_path)
+            os.unlink(tree_path)
+
+    def test_kfog_ou2table_requires_mu_for_all_regimes(self):
+        with tempfile.NamedTemporaryFile("w", delete=False) as regime_tmp:
+            regime_path = regime_tmp.name
+            regime_tmp.write("node_name\tregime\n")
+            regime_tmp.write("N1\t1\n")
+        with tempfile.NamedTemporaryFile("w", delete=False) as leaf_tmp:
+            leaf_path = leaf_tmp.name
+            leaf_tmp.write("node_name\tparam\tregime\tt1\tt2\n")
+            leaf_tmp.write("x\tmu\t0\t1.0\t2.0\n")
+        with tempfile.NamedTemporaryFile("w", delete=False) as tree_tmp:
+            tree_path = tree_tmp.name
+            tree_tmp.write("((A_x:1,B_x:1)N1:1,C_x:2)Root;\n")
+        try:
+            with self.assertRaisesRegex(ValueError, "Missing mu values"):
+                kfog.ou2table(regime_path, leaf_path, tree_path)
         finally:
             import os
             os.unlink(regime_path)

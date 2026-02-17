@@ -18,5 +18,5 @@ setup(
     url='https://github.com/kfuku52/kftools.git',
     keywords='',
     packages=find_packages(),
-    install_requires=['ete3', 'numpy', 'pandas', 'matplotlib', 'scipy', 'statsmodels'],
+    install_requires=['ete4', 'numpy', 'pandas', 'matplotlib', 'scipy', 'statsmodels'],
 )

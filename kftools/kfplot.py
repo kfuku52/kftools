@@ -270,7 +270,10 @@ def hist_boxplot(x='', category='', df=None, colors=None, xlim=None, bins=None, 
         x_values_arr = x_values.to_numpy(copy=False)
         ax.hist(x_values_arr, bins=bins, cumulative=True, histtype='step', lw=1, alpha=alpha,
                 density=True, color=color, label=label)
-        box = ax.boxplot(x_values_arr, positions=[box_position], vert=False, showfliers=False, widths=[0.1])
+        try:
+            box = ax.boxplot(x_values_arr, positions=[box_position], orientation='horizontal', showfliers=False, widths=[0.1])
+        except TypeError:
+            box = ax.boxplot(x_values_arr, positions=[box_position], vert=False, showfliers=False, widths=[0.1])
         for element in ['boxes', 'whiskers', 'fliers', 'means', 'medians', 'caps']:
             matplotlib.pyplot.setp(box[element], color=color, linestyle='solid')
         yticks.append(box_position)
