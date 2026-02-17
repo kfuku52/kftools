@@ -2,7 +2,6 @@ import matplotlib.pyplot
 import numpy
 import pandas
 import scipy.stats
-import seaborn
 import statsmodels.api as sm
 import statsmodels.formula.api
 from decimal import Decimal
@@ -59,11 +58,23 @@ def stacked_barplot(x, y, data, colors, ax):
     if isinstance(cols['x'], list):
         ncol = dfs['x'].columns.shape[0]
         for i in reversed(range(ncol)):
-            seaborn.barplot(x=dfs['x'].columns[i], y=y, data=df, color=colors[i], ax=ax, linewidth=0)
+            grouped = (
+                df.loc[:, [dfs['x'].columns[i], y]]
+                .groupby(y, sort=False)
+                .mean(numeric_only=True)
+                .iloc[:, 0]
+            )
+            ax.barh(grouped.index.to_list(), grouped.values, color=colors[i], linewidth=0)
     if isinstance(cols['y'], list):
         ncol = dfs['y'].columns.shape[0]
         for i in reversed(range(ncol)):
-            seaborn.barplot(x=x, y=dfs['y'].columns[i], data=df, color=colors[i], ax=ax, linewidth=0)
+            grouped = (
+                df.loc[:, [x, dfs['y'].columns[i]]]
+                .groupby(x, sort=False)
+                .mean(numeric_only=True)
+                .iloc[:, 0]
+            )
+            ax.bar(grouped.index.to_list(), grouped.values, color=colors[i], linewidth=0)
     return ax
 
 

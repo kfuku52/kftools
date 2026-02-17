@@ -21,5 +21,8 @@
 pip install git+https://github.com/kfuku52/kftools
 ```
 
+## Example output
+![kfplot examples](docs/images/kfplot_examples.png)
+
 ## Licensing
 This program is MIT-licensed. See [LICENSE](LICENSE) for details.
