@@ -74,14 +74,34 @@ class TestKFToolsSmoke(unittest.TestCase):
 
     def test_kfphylo_transfer_root(self):
         tree_from = ete4.PhyloTree("((A:1,B:1):2,(C:1,D:1):2);", parser=1)
-        tree_to = ete4.PhyloTree("((A:1,C:1):2,(B:1,D:1):2);", parser=1)
+        tree_to = ete4.PhyloTree("(A:1,(B:1,(C:1,D:1):2):2);", parser=1)
         out = kfphylo.transfer_root(tree_to=tree_to, tree_from=tree_from)
         self.assertEqual(set(out.leaf_names()), set(tree_from.leaf_names()))
+        self.assertEqual(len(out.get_children()), 2)
 
     def test_kfphylo_transfer_root_requires_bifurcating_root(self):
         tree_from = "(A:1,B:1,C:1);"
         tree_to = "((A:1,B:1):1,C:2);"
         with self.assertRaisesRegex(ValueError, "bifurcating"):
+            kfphylo.transfer_root(tree_to=tree_to, tree_from=tree_from)
+
+    def test_kfphylo_transfer_root_accepts_multifurcating_tree_to_root(self):
+        tree_from = ete4.PhyloTree("((A:1,B:1):2,(C:1,D:1):2);", parser=1)
+        tree_to = ete4.PhyloTree("(A:1,B:1,(C:1,D:1):2);", parser=1)
+        out = kfphylo.transfer_root(tree_to=tree_to, tree_from=tree_from)
+        self.assertEqual(set(out.leaf_names()), set(tree_from.leaf_names()))
+        self.assertEqual(len(out.get_children()), 2)
+
+    def test_kfphylo_transfer_root_raises_on_incompatible_split(self):
+        tree_from = ete4.PhyloTree("((A:1,B:1):2,(C:1,D:1):2);", parser=1)
+        tree_to = ete4.PhyloTree("(A:1,C:1,(B:1,D:1):2);", parser=1)
+        with self.assertRaisesRegex(ValueError, "root split"):
+            kfphylo.transfer_root(tree_to=tree_to, tree_from=tree_from)
+
+    def test_kfphylo_transfer_root_raises_on_tip_mismatch(self):
+        tree_from = ete4.PhyloTree("((A:1,B:1):2,(C:1,D:1):2);", parser=1)
+        tree_to = ete4.PhyloTree("((A:1,B:1):2,(C:1,E:1):2);", parser=1)
+        with self.assertRaisesRegex(ValueError, "identical tips"):
             kfphylo.transfer_root(tree_to=tree_to, tree_from=tree_from)
 
     def test_kfphylo_transfer_internal_node_names_requires_same_topology(self):

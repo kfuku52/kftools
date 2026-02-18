@@ -91,28 +91,74 @@ def add_numerical_node_labels(tree):
 def transfer_root(tree_to, tree_from, verbose=False):
     tree_to = load_phylo_tree(tree_to, parser=1)
     tree_from = load_phylo_tree(tree_from, parser=1)
-    tip_set_diff = set(tree_to.leaf_names()) - set(tree_from.leaf_names())
-    if tip_set_diff:
-        raise ValueError('tree_to has more tips than tree_from. tip_set_diff = ' + str(tip_set_diff))
+    leaf_names_to = set(tree_to.leaf_names())
+    leaf_names_from = set(tree_from.leaf_names())
+    if leaf_names_to != leaf_names_from:
+        missing_in_tree_to = sorted(leaf_names_from - leaf_names_to)
+        extra_in_tree_to = sorted(leaf_names_to - leaf_names_from)
+        raise ValueError(
+            "tree_to and tree_from must have identical tips. "
+            f"missing_in_tree_to={missing_in_tree_to}, extra_in_tree_to={extra_in_tree_to}"
+        )
+
     from_children = tree_from.get_children()
-    to_children = tree_to.get_children()
     if len(from_children) != 2:
         raise ValueError(f"tree_from root must be bifurcating (2 children), got {len(from_children)}")
-    if len(to_children) != 2:
-        raise ValueError(f"tree_to root must be bifurcating (2 children), got {len(to_children)}")
-    subroot_leaves = [list(node.leaf_names()) for node in from_children]
-    is_n0_bigger_than_n1 = len(subroot_leaves[0]) > len(subroot_leaves[1])
-    ingroups = subroot_leaves[0] if is_n0_bigger_than_n1 else subroot_leaves[1]
-    outgroups = subroot_leaves[0] if not is_n0_bigger_than_n1 else subroot_leaves[1]
+
+    split_leafsets = [set(node.leaf_names()) for node in from_children]
+
+    def _resolve_clade_node(tree, clade_leafset):
+        clade_leaf_names = sorted(clade_leafset)
+        if len(clade_leaf_names) == 1:
+            leaf_name = clade_leaf_names[0]
+            for leaf in tree.leaves():
+                if leaf.name == leaf_name:
+                    return leaf
+            return None
+        try:
+            clade_node = tree.common_ancestor(clade_leaf_names)
+        except Exception:
+            return None
+        if set(clade_node.leaf_names()) != clade_leafset:
+            return None
+        return clade_node
+
+    valid_outgroup_indices = [
+        idx for idx, clade_leafset in enumerate(split_leafsets)
+        if _resolve_clade_node(tree_to, clade_leafset) is not None
+    ]
+    if len(valid_outgroup_indices) == 0:
+        split_display = [sorted(clade_leafset) for clade_leafset in split_leafsets]
+        raise ValueError(
+            "Failed to transfer root because tree_to does not contain "
+            f"the root split from tree_from: {split_display}"
+        )
+    if len(valid_outgroup_indices) == 1:
+        outgroup_idx = valid_outgroup_indices[0]
+    else:
+        outgroup_idx = 0 if len(split_leafsets[0]) <= len(split_leafsets[1]) else 1
+    ingroup_idx = 1 - outgroup_idx
+
+    outgroups = sorted(split_leafsets[outgroup_idx])
+    ingroups = sorted(split_leafsets[ingroup_idx])
     if verbose:
         print('outgroups:', outgroups)
     tree_to.set_outgroup(ingroups[0])
-    if len(outgroups) == 1:
-        outgroup_ancestor = next(node for node in tree_to.leaves() if node.name == outgroups[0])
-    else:
-        outgroup_ancestor = tree_to.common_ancestor(outgroups)
+
+    outgroup_ancestor = _resolve_clade_node(tree_to, set(outgroups))
+    if outgroup_ancestor is None:
+        raise ValueError(
+            "Failed to transfer root because tree_to does not preserve "
+            "the outgroup clade after rerooting."
+        )
     tree_to.set_outgroup(outgroup_ancestor)
+
     subroot_to = tree_to.get_children()
+    if len(subroot_to) != 2:
+        raise ValueError(
+            "Failed to transfer root because rerooted tree_to root is not bifurcating "
+            f"(got {len(subroot_to)} children)."
+        )
     subroot_from = from_children
     total_subroot_length_to = sum(node.dist for node in subroot_to)
     total_subroot_length_from = sum(node.dist for node in subroot_from)
@@ -124,8 +170,12 @@ def transfer_root(tree_to, tree_from, verbose=False):
         for n_to in subroot_to:
             n_to_leafset = frozenset(n_to.leaf_names())
             n_from_dist = dist_by_leafset.get(n_to_leafset)
-            if n_from_dist is not None:
-                n_to.dist = (n_from_dist / total_subroot_length_from) * total_subroot_length_to
+            if n_from_dist is None:
+                raise ValueError(
+                    "Failed to transfer root because rerooted split in tree_to "
+                    "did not match tree_from root split."
+                )
+            n_to.dist = (n_from_dist / total_subroot_length_from) * total_subroot_length_to
 
     for n_to in tree_to.traverse():
         if not n_to.name:
