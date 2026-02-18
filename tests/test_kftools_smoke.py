@@ -38,7 +38,7 @@ class TestKFToolsSmoke(unittest.TestCase):
     def test_kfphylo(self):
         tree = ete4.PhyloTree("((A:1,B:1):2,C:3);", parser=1)
         out = kfphylo.add_numerical_node_labels(tree)
-        labels = [node.numerical_label for node in out.traverse()]
+        labels = [node.branch_id for node in out.traverse()]
         self.assertEqual(len(labels), len(set(labels)))
         self.assertTrue(kfphylo.check_ultrametric(tree))
 
@@ -127,7 +127,7 @@ class TestKFToolsSmoke(unittest.TestCase):
         df2 = kfog.nwk2table(newick, attr="dist", age=False, parent=True, sister=True)
         self.assertIn("parent", df2.columns)
         self.assertIn("sister", df2.columns)
-        self.assertEqual(df2["numerical_label"].tolist(), sorted(df2["numerical_label"].tolist()))
+        self.assertEqual(df2["branch_id"].tolist(), sorted(df2["branch_id"].tolist()))
 
     def test_kfog_nwk2table_age_requires_ultrametric(self):
         non_ultrametric = "((A_a:1,B_b:2):1,C_c:2);"
@@ -202,7 +202,7 @@ class TestKFToolsSmoke(unittest.TestCase):
             tree_tmp.write("((A_x:1,B_x:1)N1:1,C_x:2)Root;\n")
         try:
             out = kfog.ou2table(regime_path, leaf_path, tree_path)
-            self.assertIn("numerical_label", out.columns)
+            self.assertIn("branch_id", out.columns)
             self.assertIn("tau", out.columns)
             self.assertIn("delta_tau", out.columns)
             self.assertIn("mu_t1", out.columns)
@@ -303,7 +303,7 @@ class TestKFToolsSmoke(unittest.TestCase):
         b = pandas.DataFrame(
             {
                 "orthogroup": ["og1", "og1", "og1", "og2"],
-                "numerical_label": [0, 1, 2, 0],
+                "branch_id": [0, 1, 2, 0],
                 "parent": [1, 2, 2, 0],
                 "flag": [0, 1, 0, 1],
                 "value": [10, 20, 30, 40],
@@ -314,7 +314,7 @@ class TestKFToolsSmoke(unittest.TestCase):
         b_dup = pandas.DataFrame(
             {
                 "orthogroup": ["og1", "og1", "og1", "og1"],
-                "numerical_label": [0, 0, 1, 2],
+                "branch_id": [0, 0, 1, 2],
                 "parent": [1, 2, 2, 2],
                 "flag": [1, 0, 0, 0],
                 "value": [11, 99, 20, 30],
@@ -324,7 +324,7 @@ class TestKFToolsSmoke(unittest.TestCase):
 
         d = pandas.DataFrame(
             {
-                "numerical_label": [0, 1, 2],
+                "branch_id": [0, 1, 2],
                 "parent": [1, 2, 2],
                 "x": [10.0, 13.0, 20.0],
             }

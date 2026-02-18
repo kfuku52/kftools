@@ -31,12 +31,12 @@ def nwk2table(tree, attr='', age=False, parent=False, sister=False):
         if not check_ultrametric(tree):
             raise ValueError("Tree must be ultrametric when age=True and attr='dist'")
         for node in tree.traverse(strategy="postorder"):
-            label = node.numerical_label
+            label = node.branch_id
             if node.is_leaf:
                 age_values[label] = 0.0
             else:
                 first_child = node.children[0]
-                age_values[label] = age_values[first_child.numerical_label] + first_child.dist
+                age_values[label] = age_values[first_child.branch_id] + first_child.dist
 
     children = tree.children
     has_typed_attr = (len(children) > 0) and hasattr(children[0], attr)
@@ -50,24 +50,24 @@ def nwk2table(tree, attr='', age=False, parent=False, sister=False):
     sister_values = numpy.full(n_nodes, -1, dtype=numpy.int64) if sister else None
 
     for node in nodes:
-        label = node.numerical_label
+        label = node.branch_id
         if has_attr_for_all_nodes:
             attr_values[label] = getattr(node, attr)
         else:
             attr_values[label] = getattr(node, attr) if hasattr(node, attr) else numpy.nan
         if parent_values is not None and (not node.is_root):
-            parent_values[label] = node.up.numerical_label
+            parent_values[label] = node.up.branch_id
         if sister_values is not None and (not node.is_root):
             siblings = node.up.children
             if len(siblings) == 2:
                 sister_node = siblings[1] if siblings[0] is node else siblings[0]
-                sister_values[label] = sister_node.numerical_label
+                sister_values[label] = sister_node.branch_id
             else:
                 sister_nodes = node.get_sisters()
                 if len(sister_nodes) > 0:
-                    sister_values[label] = sister_nodes[0].numerical_label
+                    sister_values[label] = sister_nodes[0].branch_id
 
-    data = {'numerical_label': numpy.arange(n_nodes, dtype=numpy.int64)}
+    data = {'branch_id': numpy.arange(n_nodes, dtype=numpy.int64)}
     data[attr] = attr_values
     if age_values is not None:
         data['age'] = age_values
@@ -97,9 +97,9 @@ def node_gene2species(gene_tree, species_tree, is_ultrametric=False):
     if tip_set_diff:
         sys.stderr.write(f"Warning. A total of {len(tip_set_diff)} species are missing in the species tree: {str(tip_set_diff)}\n")
     if is_ultrametric:
-        cn = ["numerical_label", "spnode_coverage", 'spnode_age']
+        cn = ["branch_id", "spnode_coverage", 'spnode_age']
     else:
-        cn = ["numerical_label", "spnode_coverage"]
+        cn = ["branch_id", "spnode_coverage"]
     species_nodes = list(species_tree.traverse(strategy="postorder"))
     species_names = {sn: (sn.name or '').replace('\'', '') for sn in species_nodes}
     species_leaf_node = {leaf.name: leaf for leaf in species_tree.leaves()}
@@ -179,7 +179,7 @@ def node_gene2species(gene_tree, species_tree, is_ultrametric=False):
     for gn in gene_nodes:
         coverage_node = gene_coverage[gn]
         row = {
-            "numerical_label": gn.numerical_label,
+            "branch_id": gn.branch_id,
             "spnode_coverage": "" if coverage_node is None else species_names[coverage_node],
         }
         if is_ultrametric:
@@ -205,7 +205,7 @@ def ou2table(regime_file, leaf_file, input_tree_file):
     tissues = df_leaf.columns[3:].values
     if 'expectations' in df_leaf['param'].values:
         df_leaf.loc[(df_leaf['param'] == 'expectations'), 'param'] = 'mu'
-    cn1 = ["numerical_label", "regime", "is_shift", "num_child_shift"]
+    cn1 = ["branch_id", "regime", "is_shift", "num_child_shift"]
     cn2 = ["tau", "delta_tau", "delta_maxmu", "mu_complementarity"]
     cn3 = ["mu_" + tissue for tissue in tissues]
     cn = cn1 + cn2 + cn3
@@ -237,7 +237,7 @@ def ou2table(regime_file, leaf_file, input_tree_file):
     if missing_regimes:
         raise ValueError(f"Missing mu values for regime IDs: {missing_regimes}")
 
-    numerical_label = numpy.empty(num_nodes, dtype=numpy.int64)
+    branch_id = numpy.empty(num_nodes, dtype=numpy.int64)
     regime = numpy.empty(num_nodes, dtype=numpy.int64)
     is_shift = numpy.empty(num_nodes, dtype=numpy.int64)
     num_child_shift = numpy.full(num_nodes, numpy.nan, dtype=float)
@@ -245,24 +245,24 @@ def ou2table(regime_file, leaf_file, input_tree_file):
     parent_labels = numpy.empty(num_nodes, dtype=numpy.int64)
     shift_pairs = []
     for row_idx, node in enumerate(nodes):
-        node_label = node.numerical_label
+        node_label = node.branch_id
         shift_flag = int((not node.is_root) and (node.regime != node.up.regime))
-        numerical_label[row_idx] = node_label
+        branch_id[row_idx] = node_label
         regime[row_idx] = node.regime
         is_shift[row_idx] = shift_flag
         mu_values[row_idx, :] = mu_by_regime[node.regime]
-        parent_labels[row_idx] = -1 if node.is_root else node.up.numerical_label
+        parent_labels[row_idx] = -1 if node.is_root else node.up.branch_id
         if not node.is_leaf:
             children = node.get_children()
             num_child_shift[row_idx] = sum(int(node.regime != child.regime) for child in children)
         if shift_flag:
             sisters = node.get_sisters()
             if len(sisters) > 0:
-                shift_pairs.append((node_label, sisters[0].numerical_label))
+                shift_pairs.append((node_label, sisters[0].branch_id))
 
     df = pandas.DataFrame(
         {
-            "numerical_label": numerical_label,
+            "branch_id": branch_id,
             "regime": regime,
             "is_shift": is_shift,
             "num_child_shift": num_child_shift,
@@ -273,7 +273,7 @@ def ou2table(regime_file, leaf_file, input_tree_file):
     tau_values = calc_tau(df, cn3, unlog2=True, unPlus1=True)
     df["tau"] = tau_values
     tau_by_label = numpy.empty(num_nodes, dtype=float)
-    tau_by_label[numerical_label] = tau_values
+    tau_by_label[branch_id] = tau_values
     parent_labels_safe = parent_labels.copy()
     parent_labels_safe[parent_labels_safe == -1] = 0
     delta_tau = tau_values - tau_by_label[parent_labels_safe]
@@ -283,7 +283,7 @@ def ou2table(regime_file, leaf_file, input_tree_file):
     mu_max_values = mu_values.max(axis=1)
     mu_unlog_values = numpy.clip(numpy.exp2(mu_values) - 1, a_min=0, a_max=None)
     label_to_idx = numpy.empty(num_nodes, dtype=numpy.int64)
-    label_to_idx[numerical_label] = numpy.arange(num_nodes, dtype=numpy.int64)
+    label_to_idx[branch_id] = numpy.arange(num_nodes, dtype=numpy.int64)
     delta_maxmu = numpy.full(num_nodes, numpy.nan, dtype=float)
     mu_complementarity = numpy.full(num_nodes, numpy.nan, dtype=float)
     for my_label, sis_label in shift_pairs:
@@ -298,7 +298,7 @@ def ou2table(regime_file, leaf_file, input_tree_file):
 def get_misc_node_statistics(tree_file, tax_annot=False):
     tree = load_phylo_tree(tree_file, parser=1)
     tree = add_numerical_node_labels(tree)
-    cn1 = ["numerical_label", "taxon", "taxid", "num_sp", "num_leaf", "so_event", "dup_conf_score"]
+    cn1 = ["branch_id", "taxon", "taxid", "num_sp", "num_leaf", "so_event", "dup_conf_score"]
     cn2 = ["parent", "sister", "child1", "child2", "so_event_parent"]
     cn = cn1 + cn2
     nodes = list(tree.traverse())
@@ -348,7 +348,7 @@ def get_misc_node_statistics(tree_file, tax_annot=False):
             dup_conf_score_by_node[node] = 0.0
 
     n_nodes = len(nodes)
-    numerical_label = numpy.empty(n_nodes, dtype=numpy.int64)
+    branch_id = numpy.empty(n_nodes, dtype=numpy.int64)
     taxon = numpy.empty(n_nodes, dtype=object)
     taxid = numpy.empty(n_nodes, dtype=numpy.int64)
     num_sp = numpy.empty(n_nodes, dtype=numpy.int64)
@@ -362,29 +362,29 @@ def get_misc_node_statistics(tree_file, tax_annot=False):
     so_event_parent = numpy.full(n_nodes, "S", dtype=object)
 
     for row_idx, node in enumerate(nodes):
-        label = node.numerical_label
+        label = node.branch_id
         node_dup_conf_score = dup_conf_score_by_node.get(node, 0.0)
-        numerical_label[row_idx] = label
+        branch_id[row_idx] = label
         taxon[row_idx] = str(node.sci_name)
         taxid[row_idx] = node.taxid
         num_sp[row_idx] = species_mask_by_node[node].bit_count()
         num_leaf[row_idx] = num_leaf_by_node[node]
-        if hasattr(node.up, "numerical_label"):
-            parent[row_idx] = node.up.numerical_label
+        if hasattr(node.up, "branch_id"):
+            parent[row_idx] = node.up.branch_id
         if node.up is not None:
             siblings = node.up.children
             if len(siblings) == 2:
                 sister_node = siblings[1] if siblings[0] is node else siblings[0]
-                sister[row_idx] = sister_node.numerical_label
+                sister[row_idx] = sister_node.branch_id
             else:
                 sister_nodes = node.get_sisters()
                 if len(sister_nodes) == 1:
-                    sister[row_idx] = sister_nodes[0].numerical_label
+                    sister[row_idx] = sister_nodes[0].branch_id
         if not node.is_leaf:
             if len(node.children) >= 1:
-                child1[row_idx] = node.children[0].numerical_label
+                child1[row_idx] = node.children[0].branch_id
             if len(node.children) >= 2:
-                child2[row_idx] = node.children[1].numerical_label
+                child2[row_idx] = node.children[1].branch_id
             dup_conf_score[row_idx] = node_dup_conf_score
             so_event[row_idx] = "D" if node_dup_conf_score > 0 else "S"
         if (node.up is not None) and (dup_conf_score_by_node.get(node.up, 0.0) > 0):
@@ -392,7 +392,7 @@ def get_misc_node_statistics(tree_file, tax_annot=False):
 
     return pandas.DataFrame(
         {
-            "numerical_label": numerical_label,
+            "branch_id": branch_id,
             "taxon": taxon,
             "taxid": taxid,
             "num_sp": num_sp,
@@ -411,7 +411,7 @@ def get_misc_node_statistics(tree_file, tax_annot=False):
 def compute_delta(df, column):
     out = df.copy()
     parent_column = f'parent_{column}'
-    value_by_label = out.set_index('numerical_label')[column]
+    value_by_label = out.set_index('branch_id')[column]
     out[parent_column] = out['parent'].map(value_by_label)
     out[f'delta_{column}'] = out[column] - out[parent_column]
     out = out.drop(parent_column, axis=1)
@@ -548,8 +548,8 @@ def get_dating_method(file):
 
 
 def get_most_recent(b, nl, og, target_col, target_value, return_col, og_col='orthogroup'):
-    b_og = b.loc[b[og_col] == og, ['numerical_label', 'parent', target_col, return_col]]
-    b_og = b_og.drop_duplicates(subset='numerical_label', keep='first').set_index('numerical_label', drop=False)
+    b_og = b.loc[b[og_col] == og, ['branch_id', 'parent', target_col, return_col]]
+    b_og = b_og.drop_duplicates(subset='branch_id', keep='first').set_index('branch_id', drop=False)
     root_nl = b_og.index.max()
     current_nl = nl
     while current_nl != root_nl:

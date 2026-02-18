@@ -47,11 +47,11 @@ def transfer_internal_node_names(tree_to, tree_from):
     name_by_label = {}
     for node in tree_from.traverse():
         if not node.is_leaf:
-            name_by_label[node.numerical_label] = node.name
+            name_by_label[node.branch_id] = node.name
     for node in tree_to.traverse():
         if node.is_leaf:
             continue
-        matched_name = name_by_label.get(node.numerical_label)
+        matched_name = name_by_label.get(node.branch_id)
         if matched_name is not None:
             node.name = matched_name
     return tree_to
@@ -68,23 +68,23 @@ def fill_internal_node_names(tree):
 
 def add_numerical_node_labels(tree):
     all_leaf_names = sorted(tree.leaf_names())
-    leaf_numerical_labels = {leaf_name: (1 << i) for i, leaf_name in enumerate(all_leaf_names)}
+    leaf_branch_ids = {leaf_name: (1 << i) for i, leaf_name in enumerate(all_leaf_names)}
     nodes = list(tree.traverse())
     node_label_sum = {}
     for node in tree.traverse(strategy="postorder"):
         if node.is_leaf:
-            node_label_sum[node] = leaf_numerical_labels[node.name]
+            node_label_sum[node] = leaf_branch_ids[node.name]
         else:
             node_mask = 0
             for child in node.get_children():
                 node_mask |= node_label_sum[child]
             node_label_sum[node] = node_mask
-    numerical_labels = [node_label_sum[node] for node in nodes]
-    argsort_labels = numpy.argsort(numerical_labels)
+    branch_ids = [node_label_sum[node] for node in nodes]
+    argsort_labels = numpy.argsort(branch_ids)
     label_ranks = numpy.empty_like(argsort_labels)
     label_ranks[argsort_labels] = numpy.arange(len(argsort_labels))
     for i, node in enumerate(nodes):
-        node.numerical_label = int(label_ranks[i])
+        node.branch_id = int(label_ranks[i])
     return tree
 
 
