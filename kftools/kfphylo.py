@@ -67,24 +67,24 @@ def fill_internal_node_names(tree):
 
 
 def add_numerical_node_labels(tree):
+    """Assign deterministic `branch_id` values in a CSUBST-compatible manner.
+
+    The ranking algorithm intentionally mirrors CSUBST's branch-ID assignment
+    so that identical tree topologies receive identical `branch_id` values
+    across kftools and CSUBST.
+    """
     all_leaf_names = sorted(tree.leaf_names())
     leaf_branch_ids = {leaf_name: (1 << i) for i, leaf_name in enumerate(all_leaf_names)}
     nodes = list(tree.traverse())
-    node_label_sum = {}
-    for node in tree.traverse(strategy="postorder"):
-        if node.is_leaf:
-            node_label_sum[node] = leaf_branch_ids[node.name]
-        else:
-            node_mask = 0
-            for child in node.get_children():
-                node_mask |= node_label_sum[child]
-            node_label_sum[node] = node_mask
-    branch_ids = [node_label_sum[node] for node in nodes]
-    argsort_labels = numpy.argsort(branch_ids)
-    label_ranks = numpy.empty_like(argsort_labels)
-    label_ranks[argsort_labels] = numpy.arange(len(argsort_labels))
-    for i, node in enumerate(nodes):
-        node.branch_id = int(label_ranks[i])
+    clade_signatures = []
+    for node in nodes:
+        leaf_names = node.leaf_names()
+        clade_signature = sum(leaf_branch_ids[leaf_name] for leaf_name in leaf_names)
+        clade_signatures.append(clade_signature)
+    sorted_node_indices = sorted(range(len(nodes)), key=lambda idx: clade_signatures[idx])
+    rank_by_node_index = {node_index: rank for rank, node_index in enumerate(sorted_node_indices)}
+    for node_index, node in enumerate(nodes):
+        node.branch_id = rank_by_node_index[node_index]
     return tree
 
 

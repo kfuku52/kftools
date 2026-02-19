@@ -42,6 +42,35 @@ class TestKFToolsSmoke(unittest.TestCase):
         self.assertEqual(len(labels), len(set(labels)))
         self.assertTrue(kfphylo.check_ultrametric(tree))
 
+    def test_kfphylo_branch_id_is_csubst_compatible(self):
+        def _csubst_reference_branch_ids(tree):
+            all_leaf_names = sorted(tree.leaf_names())
+            leaf_branch_ids = {leaf_name: (1 << i) for i, leaf_name in enumerate(all_leaf_names)}
+            nodes = list(tree.traverse())
+            clade_signatures = [
+                sum(leaf_branch_ids[leaf_name] for leaf_name in node.leaf_names())
+                for node in nodes
+            ]
+            sorted_node_indices = sorted(range(len(nodes)), key=lambda idx: clade_signatures[idx])
+            rank_by_node_index = {node_index: rank for rank, node_index in enumerate(sorted_node_indices)}
+            return [rank_by_node_index[i] for i in range(len(nodes))]
+
+        tree_small = ete4.PhyloTree("((A:1,B:1):2,C:3);", parser=1)
+        expected_small = _csubst_reference_branch_ids(tree_small)
+        out_small = kfphylo.add_numerical_node_labels(tree_small)
+        actual_small = [node.branch_id for node in out_small.traverse()]
+        self.assertEqual(actual_small, expected_small)
+
+        leaf_names = [f"L{i}" for i in range(64)]
+        tree_txt = f"{leaf_names[0]}:1"
+        for leaf_name in leaf_names[1:]:
+            tree_txt = f"({tree_txt},{leaf_name}:1):1"
+        tree_large = ete4.PhyloTree(tree_txt + ";", parser=1)
+        expected_large = _csubst_reference_branch_ids(tree_large)
+        out_large = kfphylo.add_numerical_node_labels(tree_large)
+        actual_large = [node.branch_id for node in out_large.traverse()]
+        self.assertEqual(actual_large, expected_large)
+
     def test_kfphylo_load_phylo_tree(self):
         newick = "((A:1,B:1):2,C:3);"
         tree_from_newick = kfphylo.load_phylo_tree(newick, parser=1)
