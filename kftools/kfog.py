@@ -1,10 +1,11 @@
 import copy
 import gzip
+import os
 import re
 import sys
 
-import numpy
-import pandas
+import numpy as np
+import pandas as pd
 
 try:
     from .kfexpression import calc_complementarity, calc_tau
@@ -13,20 +14,154 @@ except ImportError:
     from kfexpression import calc_complementarity, calc_tau
     from kfphylo import add_numerical_node_labels, check_ultrametric, load_phylo_tree, taxonomic_annotation
 
-NOTUNG_OPT_ROOT_RE = re.compile(r"Number of optimal roots: ([0-9]+) out of ([0-9]+)")
-NOTUNG_BEST_SCORE_RE = re.compile(r"Best rooting score: (\d*[.,]?\d*), worst rooting score: (\d*[.,]?\d*)")
-ROOT_RETURNING_RE = re.compile(r"Returning the (.*) tree")
+NOTUNG_OPT_ROOT_RE = re.compile(
+    r"Number of optimal roots:\s*([0-9][0-9,]*)\s*out of\s*([0-9][0-9,]*)",
+    flags=re.IGNORECASE,
+)
+FLOAT_TOKEN_RE = r"[-+]?(?:[0-9]+(?:[.,][0-9]*)?|[.,][0-9]+)(?:[eE][-+]?[0-9]+)?"
+NOTUNG_BEST_SCORE_RE = re.compile(
+    r"Best rooting score:\s*(.*?)\s*,\s*worst rooting score:\s*(.*?)\s*$",
+    flags=re.IGNORECASE,
+)
+ROOT_RETURNING_RE = re.compile(r"Returning the (.*) tree", flags=re.IGNORECASE)
 ROOT_POSITIONS_PREFIX = "root positions with rho peak: "
+ROOT_POSITIONS_RE = re.compile(r"root positions with rho peak:\s*(.*)", flags=re.IGNORECASE)
+NOTUNG_DUP_RE = re.compile(r"-\s*Duplications\s*:\s*([0-9][0-9,]*)", flags=re.IGNORECASE)
+NOTUNG_CODIV_RE = re.compile(r"-\s*Co[- ]?Divergences\s*:\s*([0-9][0-9,]*)", flags=re.IGNORECASE)
+NOTUNG_TRANSFER_RE = re.compile(r"-\s*Transfers\s*:\s*([0-9][0-9,]*)", flags=re.IGNORECASE)
+NOTUNG_LOSS_RE = re.compile(r"-\s*Losses\s*:\s*([0-9][0-9,]*)", flags=re.IGNORECASE)
+NOTUNG_POLYTOMY_RE = re.compile(r"-\s*Polytomies\s*:\s*([0-9][0-9,]*)", flags=re.IGNORECASE)
+INT64_MAX = np.iinfo(np.int64).max
+
+
+def _validate_column_name(column_name, argument_name):
+    if not isinstance(column_name, str):
+        raise ValueError(f"{argument_name} must be a string column name")
+    if column_name.strip() == "":
+        raise ValueError(f"{argument_name} must not be an empty string")
+
+
+def _validate_boolean_flag(flag_value, argument_name):
+    if not isinstance(flag_value, (bool, np.bool_)):
+        raise ValueError(f"{argument_name} must be a boolean value")
+    return bool(flag_value)
+
+
+def _validate_hashable_series_values(series, argument_name):
+    non_missing_values = series.dropna().to_list()
+    unhashable_examples = []
+    for value in non_missing_values:
+        try:
+            hash(value)
+        except TypeError:
+            unhashable_examples.append(str(value))
+            if len(unhashable_examples) >= 5:
+                break
+    if len(unhashable_examples) > 0:
+        raise ValueError(
+            f"{argument_name} must contain hashable values; invalid examples: {unhashable_examples}"
+        )
+
+
+def _validate_non_missing_series_values(series, argument_name):
+    missing_mask = series.isna()
+    if missing_mask.any():
+        raise ValueError(f"{argument_name} must not contain missing values")
+
+
+def _coerce_path_argument(path_value, argument_name='file'):
+    if isinstance(path_value, (bytes, bytearray)):
+        raise ValueError(f"{argument_name} must be a path-like string (bytes are not supported)")
+    if not isinstance(path_value, (str, os.PathLike)):
+        raise ValueError(f"{argument_name} must be a path-like string")
+    try:
+        coerced_path = os.fspath(path_value)
+    except TypeError as exc:
+        raise ValueError(f"{argument_name} must be a path-like string") from exc
+    if isinstance(coerced_path, (bytes, bytearray)):
+        raise ValueError(f"{argument_name} must be a path-like string (bytes are not supported)")
+    return coerced_path
+
+
+def _parse_int_suffix(line, prefix):
+    if (line is None) or (prefix not in line):
+        return None
+    value = line.replace(prefix, '').strip()
+    value = value.replace(',', '')
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
+def _parse_float_locale(value):
+    text = str(value).strip().replace(' ', '')
+    if text == '':
+        raise ValueError("empty float token")
+    try:
+        return float(text)
+    except ValueError:
+        pass
+
+    exponent_part = ''
+    mantissa = text
+    if ('e' in text) or ('E' in text):
+        split_match = re.match(r"^(.*?)([eE][-+]?[0-9]+)$", text)
+        if split_match is None:
+            raise ValueError(f"invalid float token: {value}")
+        mantissa = split_match.group(1)
+        exponent_part = split_match.group(2)
+
+    if (',' in mantissa) and ('.' in mantissa):
+        if mantissa.rfind('.') > mantissa.rfind(','):
+            # 1,234.56 -> dot decimal, comma thousands
+            mantissa = mantissa.replace(',', '')
+        else:
+            # 1.234,56 -> comma decimal, dot thousands
+            mantissa = mantissa.replace('.', '').replace(',', '.')
+    elif ',' in mantissa:
+        comma_parts = mantissa.split(',')
+        if (
+            (len(comma_parts) > 2)
+            and all(len(part) == 3 for part in comma_parts[1:])
+            and (comma_parts[0] not in ('', '+', '-'))
+        ):
+            # 1,234,567 -> comma thousands (multi-separator form)
+            mantissa = ''.join(comma_parts)
+        else:
+            # 1234,56 -> comma decimal
+            mantissa = mantissa.replace(',', '.')
+    elif '.' in mantissa:
+        dot_parts = mantissa.split('.')
+        if (
+            (len(dot_parts) > 2)
+            and all(len(part) == 3 for part in dot_parts[1:])
+            and (dot_parts[0] not in ('', '+', '-'))
+        ):
+            # 1.234.567 -> dot thousands (multi-separator form)
+            mantissa = ''.join(dot_parts)
+
+    return float(mantissa + exponent_part)
 
 
 def nwk2table(tree, attr='', age=False, parent=False, sister=False):
+    age = _validate_boolean_flag(age, "age")
+    parent = _validate_boolean_flag(parent, "parent")
+    sister = _validate_boolean_flag(sister, "sister")
+    if not isinstance(attr, str):
+        raise ValueError("attr must be a string")
+    if age and (attr != 'dist'):
+        raise ValueError("age=True is supported only when attr='dist'")
     tree_format = 0 if attr == 'support' else 1
     if not hasattr(tree, "traverse"):
-        tree = load_phylo_tree(tree, parser=tree_format)
+        try:
+            tree = load_phylo_tree(tree, parser=tree_format)
+        except TypeError as exc:
+            raise ValueError("tree must be a Newick string, path, or tree object") from exc
     tree = add_numerical_node_labels(tree)
     nodes = list(tree.traverse())
     n_nodes = len(nodes)
-    age_values = numpy.empty(n_nodes, dtype=float) if ((attr == 'dist') and age) else None
+    age_values = np.empty(n_nodes, dtype=float) if ((attr == 'dist') and age) else None
     if age_values is not None:
         if not check_ultrametric(tree):
             raise ValueError("Tree must be ultrametric when age=True and attr='dist'")
@@ -41,20 +176,30 @@ def nwk2table(tree, attr='', age=False, parent=False, sister=False):
     children = tree.children
     has_typed_attr = (len(children) > 0) and hasattr(children[0], attr)
     has_attr_for_all_nodes = all(hasattr(node, attr) for node in nodes)
-    if has_typed_attr and has_attr_for_all_nodes:
-        attr_dtype = type(getattr(children[0], attr))
-        attr_values = numpy.empty(n_nodes, dtype=attr_dtype)
-    else:
-        attr_values = numpy.empty(n_nodes, dtype=object)
-    parent_values = numpy.full(n_nodes, -1, dtype=numpy.int64) if parent else None
-    sister_values = numpy.full(n_nodes, -1, dtype=numpy.int64) if sister else None
-
+    attr_values_raw = [np.nan] * n_nodes
     for node in nodes:
         label = node.branch_id
         if has_attr_for_all_nodes:
-            attr_values[label] = getattr(node, attr)
+            attr_values_raw[label] = getattr(node, attr)
         else:
-            attr_values[label] = getattr(node, attr) if hasattr(node, attr) else numpy.nan
+            attr_values_raw[label] = getattr(node, attr) if hasattr(node, attr) else np.nan
+    if has_typed_attr and has_attr_for_all_nodes:
+        sample_attr = getattr(children[0], attr)
+        if isinstance(sample_attr, (str, bytes, bytearray)):
+            # Preserve variable-length strings instead of truncating to fixed-width dtypes.
+            attr_values = np.asarray(attr_values_raw, dtype=object)
+        else:
+            try:
+                attr_values = np.asarray(attr_values_raw, dtype=type(sample_attr))
+            except (TypeError, ValueError, OverflowError):
+                attr_values = np.asarray(attr_values_raw, dtype=object)
+    else:
+        attr_values = np.asarray(attr_values_raw, dtype=object)
+    parent_values = np.full(n_nodes, -1, dtype=np.int64) if parent else None
+    sister_values = np.full(n_nodes, -1, dtype=np.int64) if sister else None
+
+    for node in nodes:
+        label = node.branch_id
         if parent_values is not None and (not node.is_root):
             parent_values[label] = node.up.branch_id
         if sister_values is not None and (not node.is_root):
@@ -67,7 +212,7 @@ def nwk2table(tree, attr='', age=False, parent=False, sister=False):
                 if len(sister_nodes) > 0:
                     sister_values[label] = sister_nodes[0].branch_id
 
-    data = {'branch_id': numpy.arange(n_nodes, dtype=numpy.int64)}
+    data = {'branch_id': np.arange(n_nodes, dtype=np.int64)}
     data[attr] = attr_values
     if age_values is not None:
         data['age'] = age_values
@@ -75,18 +220,56 @@ def nwk2table(tree, attr='', age=False, parent=False, sister=False):
         data['parent'] = parent_values
     if sister_values is not None:
         data['sister'] = sister_values
-    df = pandas.DataFrame(data)
+    df = pd.DataFrame(data)
     return df
 
 def node_gene2species(gene_tree, species_tree, is_ultrametric=False):
+    is_ultrametric = _validate_boolean_flag(is_ultrametric, "is_ultrametric")
     if not hasattr(gene_tree, "traverse"):
-        gene_tree = load_phylo_tree(gene_tree, parser=1)
+        try:
+            gene_tree = load_phylo_tree(gene_tree, parser=1)
+        except TypeError as exc:
+            raise ValueError("gene_tree must be a Newick string, path, or tree object") from exc
     if not hasattr(species_tree, "traverse"):
-        species_tree = load_phylo_tree(species_tree, parser=1)
+        try:
+            species_tree = load_phylo_tree(species_tree, parser=1)
+        except TypeError as exc:
+            raise ValueError("species_tree must be a Newick string, path, or tree object") from exc
+    species_leaf_names = list(species_tree.leaf_names())
+    invalid_species_leaf_names = [
+        species_leaf_name
+        for species_leaf_name in species_leaf_names
+        if (not isinstance(species_leaf_name, str)) or (species_leaf_name.strip() == "")
+    ]
+    if len(invalid_species_leaf_names) > 0:
+        raise ValueError(
+            "species_tree leaf names must be non-empty strings for node_gene2species"
+        )
+    species_name_counts = {}
+    for species_leaf_name in species_leaf_names:
+        species_name_counts[species_leaf_name] = species_name_counts.get(species_leaf_name, 0) + 1
+    duplicate_species_names = sorted(
+        [species_leaf_name for species_leaf_name, species_count in species_name_counts.items() if species_count > 1]
+    )
+    if len(duplicate_species_names) > 0:
+        raise ValueError(
+            "species_tree leaf names must be unique for node_gene2species; "
+            f"duplicates: {duplicate_species_names}"
+        )
     gene_tree2 = copy.deepcopy(gene_tree)
     gene_tree2 = add_numerical_node_labels(gene_tree2)
     if is_ultrametric and (not check_ultrametric(gene_tree2)):
         raise ValueError("gene_tree must be ultrametric when is_ultrametric=True")
+    if is_ultrametric:
+        try:
+            species_is_ultrametric = check_ultrametric(species_tree)
+        except ValueError as exc:
+            raise ValueError(
+                "species_tree must be ultrametric with finite non-negative branch lengths "
+                "when is_ultrametric=True"
+            ) from exc
+        if not species_is_ultrametric:
+            raise ValueError("species_tree must be ultrametric when is_ultrametric=True")
     for leaf in gene_tree2.leaves():
         leaf_name_split = leaf.name.split("_", 2)
         if len(leaf_name_split) < 2:
@@ -117,7 +300,7 @@ def node_gene2species(gene_tree, species_tree, is_ultrametric=False):
         species_up_age = {}
         for sn in species_nodes:
             if sn.is_root:
-                species_up_age[sn] = numpy.inf
+                species_up_age[sn] = np.inf
             else:
                 species_up_age[sn] = species_age[sn.up]
 
@@ -193,16 +376,78 @@ def node_gene2species(gene_tree, species_tree, is_ultrametric=False):
                         break
                     current_species_node = current_species_node.up
         rows.append(row)
-    return pandas.DataFrame(rows, columns=cn)
+    return pd.DataFrame(rows, columns=cn)
 
 def ou2table(regime_file, leaf_file, input_tree_file):
-    df_regime = pandas.read_csv(regime_file, sep="\t")
-    df_leaf = pandas.read_csv(leaf_file, sep="\t")
+    regime_file = _coerce_path_argument(regime_file, 'regime_file')
+    leaf_file = _coerce_path_argument(leaf_file, 'leaf_file')
+    input_tree_file = _coerce_path_argument(input_tree_file, 'input_tree_file')
+    if (not os.path.exists(input_tree_file)) or (not os.path.isfile(input_tree_file)):
+        raise ValueError(f"input_tree_file must be an existing file path: {input_tree_file}")
+    try:
+        df_regime = pd.read_csv(regime_file, sep="\t")
+    except (OSError, UnicodeDecodeError, pd.errors.ParserError, pd.errors.EmptyDataError) as exc:
+        raise ValueError(f"Failed to read regime_file as UTF-8 tab-separated text: {regime_file}") from exc
+    try:
+        df_leaf = pd.read_csv(leaf_file, sep="\t")
+    except (OSError, UnicodeDecodeError, pd.errors.ParserError, pd.errors.EmptyDataError) as exc:
+        raise ValueError(f"Failed to read leaf_file as UTF-8 tab-separated text: {leaf_file}") from exc
+    required_regime_columns = {"node_name", "regime"}
+    missing_regime_columns = sorted(required_regime_columns - set(df_regime.columns))
+    if len(missing_regime_columns) > 0:
+        raise ValueError(f"regime_file requires columns: {missing_regime_columns}")
+    required_leaf_columns = ("node_name", "param", "regime")
+    required_leaf_columns_set = set(required_leaf_columns)
+    missing_leaf_columns = sorted(required_leaf_columns_set - set(df_leaf.columns))
+    if len(missing_leaf_columns) > 0:
+        raise ValueError(f"leaf_file requires columns: {missing_leaf_columns}")
+    if df_leaf.shape[1] <= 3:
+        raise ValueError("leaf_file must include at least one trait column after node_name/param/regime")
+    df_regime = df_regime.copy()
+    df_leaf = df_leaf.copy()
+    for df_name, df_obj in [("regime_file", df_regime), ("leaf_file", df_leaf)]:
+        regime_numeric = pd.to_numeric(df_obj["regime"], errors="coerce")
+        invalid_regime_mask = df_obj["regime"].notna() & regime_numeric.isna()
+        if invalid_regime_mask.any():
+            invalid_values = sorted(set(df_obj.loc[invalid_regime_mask, "regime"].astype(str)))
+            raise ValueError(f"{df_name} regime column must be numeric or NaN; invalid values: {invalid_values}")
+        non_finite_mask = regime_numeric.notna() & (~np.isfinite(regime_numeric.to_numpy(dtype=float, copy=False)))
+        if non_finite_mask.any():
+            invalid_values = sorted(set(df_obj.loc[non_finite_mask, "regime"].astype(str)))
+            raise ValueError(f"{df_name} regime column must contain finite numeric values; invalid values: {invalid_values}")
+        non_integer_mask = regime_numeric.notna() & (regime_numeric != np.floor(regime_numeric))
+        if non_integer_mask.any():
+            invalid_values = sorted(set(df_obj.loc[non_integer_mask, "regime"].astype(str)))
+            raise ValueError(f"{df_name} regime column must contain integer IDs; invalid values: {invalid_values}")
+        negative_mask = regime_numeric.notna() & (regime_numeric < 0)
+        if negative_mask.any():
+            invalid_values = sorted(set(df_obj.loc[negative_mask, "regime"].astype(str)))
+            raise ValueError(f"{df_name} regime column must contain non-negative IDs; invalid values: {invalid_values}")
+        too_large_mask = regime_numeric.notna() & (regime_numeric > INT64_MAX)
+        if too_large_mask.any():
+            invalid_values = sorted(set(df_obj.loc[too_large_mask, "regime"].astype(str)))
+            raise ValueError(
+                f"{df_name} regime column must be <= {INT64_MAX} to avoid integer overflow; "
+                f"invalid values: {invalid_values}"
+            )
+        df_obj["regime"] = regime_numeric
+    trait_columns = [column_name for column_name in df_leaf.columns if column_name not in required_leaf_columns_set]
+    if len(trait_columns) == 0:
+        raise ValueError("leaf_file must include at least one trait column after node_name/param/regime")
+    for trait_col in trait_columns:
+        trait_numeric = pd.to_numeric(df_leaf[trait_col], errors="coerce")
+        invalid_trait_mask = df_leaf[trait_col].notna() & trait_numeric.isna()
+        if invalid_trait_mask.any():
+            invalid_values = sorted(set(df_leaf.loc[invalid_trait_mask, trait_col].astype(str)))
+            raise ValueError(
+                f"leaf_file trait column '{trait_col}' must be numeric or NaN; invalid values: {invalid_values}"
+            )
+        df_leaf[trait_col] = trait_numeric
     tree = load_phylo_tree(input_tree_file, parser=1)
     tree = add_numerical_node_labels(tree)
     nodes = list(tree.traverse())
     num_nodes = len(nodes)
-    tissues = df_leaf.columns[3:].values
+    tissues = trait_columns
     if 'expectations' in df_leaf['param'].values:
         df_leaf.loc[(df_leaf['param'] == 'expectations'), 'param'] = 'mu'
     cn1 = ["branch_id", "regime", "is_shift", "num_child_shift"]
@@ -210,11 +455,54 @@ def ou2table(regime_file, leaf_file, input_tree_file):
     cn3 = ["mu_" + tissue for tissue in tissues]
     cn = cn1 + cn2 + cn3
     regime_map = {}
-    regime_rows = df_regime.loc[:, ["node_name", "regime"]].copy()
-    regime_rows["node_name"] = regime_rows["node_name"].fillna(value="placeholder_text")
-    for node_name, regime in regime_rows.itertuples(index=False, name=None):
-        if pandas.isna(regime):
-            continue
+    regime_rows_non_nan = df_regime.loc[df_regime["regime"].notna(), ["node_name", "regime"]].copy()
+    invalid_node_name_mask = regime_rows_non_nan["node_name"].map(
+        lambda node_name: (not isinstance(node_name, str)) or (node_name.strip() == "")
+    )
+    if invalid_node_name_mask.any():
+        invalid_values = sorted(set(regime_rows_non_nan.loc[invalid_node_name_mask, "node_name"].astype(str)))
+        raise ValueError(
+            "regime_file node_name column must contain non-empty string values when regime is provided; "
+            f"invalid values: {invalid_values}"
+        )
+    if regime_rows_non_nan.shape[0] > 0:
+        regime_nunique = regime_rows_non_nan.groupby("node_name")["regime"].nunique(dropna=True)
+        conflicting_node_names = sorted(regime_nunique.index[regime_nunique > 1].tolist())
+        if len(conflicting_node_names) > 0:
+            raise ValueError(
+                "regime_file contains conflicting regime IDs for node_name values: "
+                f"{conflicting_node_names}"
+            )
+    named_node_names = [
+        node.name
+        for node in nodes
+        if isinstance(node.name, str) and (node.name.strip() != "")
+    ]
+    tree_node_name_counts = {}
+    for node_name in named_node_names:
+        tree_node_name_counts[node_name] = tree_node_name_counts.get(node_name, 0) + 1
+    duplicate_tree_node_names = sorted(
+        [node_name for node_name, count in tree_node_name_counts.items() if count > 1]
+    )
+    if len(duplicate_tree_node_names) > 0:
+        raise ValueError(
+            "input_tree_file contains duplicate non-empty node names that make regime mapping ambiguous: "
+            f"{duplicate_tree_node_names}"
+        )
+    known_node_names = set(named_node_names)
+    unknown_node_names = sorted(
+        {
+            node_name
+            for node_name in regime_rows_non_nan["node_name"].tolist()
+            if node_name not in known_node_names
+        }
+    )
+    if len(unknown_node_names) > 0:
+        raise ValueError(
+            "regime_file contains node_name values not present in input_tree_file: "
+            f"{unknown_node_names}"
+        )
+    for node_name, regime in regime_rows_non_nan.itertuples(index=False, name=None):
         if node_name not in regime_map:
             regime_map[node_name] = int(regime)
     for node in tree.traverse(strategy="preorder"):
@@ -237,12 +525,12 @@ def ou2table(regime_file, leaf_file, input_tree_file):
     if missing_regimes:
         raise ValueError(f"Missing mu values for regime IDs: {missing_regimes}")
 
-    branch_id = numpy.empty(num_nodes, dtype=numpy.int64)
-    regime = numpy.empty(num_nodes, dtype=numpy.int64)
-    is_shift = numpy.empty(num_nodes, dtype=numpy.int64)
-    num_child_shift = numpy.full(num_nodes, numpy.nan, dtype=float)
-    mu_values = numpy.empty((num_nodes, len(cn3)), dtype=float)
-    parent_labels = numpy.empty(num_nodes, dtype=numpy.int64)
+    branch_id = np.empty(num_nodes, dtype=np.int64)
+    regime = np.empty(num_nodes, dtype=np.int64)
+    is_shift = np.empty(num_nodes, dtype=np.int64)
+    num_child_shift = np.full(num_nodes, np.nan, dtype=float)
+    mu_values = np.empty((num_nodes, len(cn3)), dtype=float)
+    parent_labels = np.empty(num_nodes, dtype=np.int64)
     shift_pairs = []
     for row_idx, node in enumerate(nodes):
         node_label = node.branch_id
@@ -260,7 +548,7 @@ def ou2table(regime_file, leaf_file, input_tree_file):
             if len(sisters) > 0:
                 shift_pairs.append((node_label, sisters[0].branch_id))
 
-    df = pandas.DataFrame(
+    df = pd.DataFrame(
         {
             "branch_id": branch_id,
             "regime": regime,
@@ -272,20 +560,20 @@ def ou2table(regime_file, leaf_file, input_tree_file):
         df[col] = mu_values[:, col_idx]
     tau_values = calc_tau(df, cn3, unlog2=True, unPlus1=True)
     df["tau"] = tau_values
-    tau_by_label = numpy.empty(num_nodes, dtype=float)
+    tau_by_label = np.empty(num_nodes, dtype=float)
     tau_by_label[branch_id] = tau_values
     parent_labels_safe = parent_labels.copy()
     parent_labels_safe[parent_labels_safe == -1] = 0
     delta_tau = tau_values - tau_by_label[parent_labels_safe]
-    delta_tau[parent_labels == -1] = numpy.nan
+    delta_tau[parent_labels == -1] = np.nan
     df["delta_tau"] = delta_tau
 
     mu_max_values = mu_values.max(axis=1)
-    mu_unlog_values = numpy.clip(numpy.exp2(mu_values) - 1, a_min=0, a_max=None)
-    label_to_idx = numpy.empty(num_nodes, dtype=numpy.int64)
-    label_to_idx[branch_id] = numpy.arange(num_nodes, dtype=numpy.int64)
-    delta_maxmu = numpy.full(num_nodes, numpy.nan, dtype=float)
-    mu_complementarity = numpy.full(num_nodes, numpy.nan, dtype=float)
+    mu_unlog_values = np.clip(np.exp2(mu_values) - 1, a_min=0, a_max=None)
+    label_to_idx = np.empty(num_nodes, dtype=np.int64)
+    label_to_idx[branch_id] = np.arange(num_nodes, dtype=np.int64)
+    delta_maxmu = np.full(num_nodes, np.nan, dtype=float)
+    mu_complementarity = np.full(num_nodes, np.nan, dtype=float)
     for my_label, sis_label in shift_pairs:
         my_idx = label_to_idx[my_label]
         sis_idx = label_to_idx[sis_label]
@@ -296,7 +584,11 @@ def ou2table(regime_file, leaf_file, input_tree_file):
     return df.loc[:, cn]
 
 def get_misc_node_statistics(tree_file, tax_annot=False):
-    tree = load_phylo_tree(tree_file, parser=1)
+    tax_annot = _validate_boolean_flag(tax_annot, "tax_annot")
+    try:
+        tree = load_phylo_tree(tree_file, parser=1)
+    except TypeError as exc:
+        raise ValueError("tree_file must be a Newick string, path, or tree object") from exc
     tree = add_numerical_node_labels(tree)
     cn1 = ["branch_id", "taxon", "taxid", "num_sp", "num_leaf", "so_event", "dup_conf_score"]
     cn2 = ["parent", "sister", "child1", "child2", "so_event_parent"]
@@ -336,30 +628,33 @@ def get_misc_node_statistics(tree_file, tax_annot=False):
         species_mask_by_node[node] = species_mask
         num_leaf_by_node[node] = num_leaf
         if len(children) >= 2:
-            child1_mask = species_mask_by_node[children[0]]
-            child2_mask = species_mask_by_node[children[1]]
-            union_mask = child1_mask | child2_mask
-            union_count = union_mask.bit_count()
+            species_seen_once = 0
+            species_seen_multiple = 0
+            for child in children:
+                child_mask = species_mask_by_node[child]
+                species_seen_multiple |= (species_seen_once & child_mask)
+                species_seen_once |= child_mask
+            union_count = species_seen_once.bit_count()
             if union_count == 0:
                 dup_conf_score_by_node[node] = 0.0
             else:
-                dup_conf_score_by_node[node] = (child1_mask & child2_mask).bit_count() / union_count
+                dup_conf_score_by_node[node] = species_seen_multiple.bit_count() / union_count
         else:
             dup_conf_score_by_node[node] = 0.0
 
     n_nodes = len(nodes)
-    branch_id = numpy.empty(n_nodes, dtype=numpy.int64)
-    taxon = numpy.empty(n_nodes, dtype=object)
-    taxid = numpy.empty(n_nodes, dtype=numpy.int64)
-    num_sp = numpy.empty(n_nodes, dtype=numpy.int64)
-    num_leaf = numpy.empty(n_nodes, dtype=numpy.int64)
-    so_event = numpy.full(n_nodes, "L", dtype=object)
-    dup_conf_score = numpy.zeros(n_nodes, dtype=float)
-    parent = numpy.full(n_nodes, -999, dtype=numpy.int64)
-    sister = numpy.full(n_nodes, -999, dtype=numpy.int64)
-    child1 = numpy.full(n_nodes, -999, dtype=numpy.int64)
-    child2 = numpy.full(n_nodes, -999, dtype=numpy.int64)
-    so_event_parent = numpy.full(n_nodes, "S", dtype=object)
+    branch_id = np.empty(n_nodes, dtype=np.int64)
+    taxon = np.empty(n_nodes, dtype=object)
+    taxid = np.empty(n_nodes, dtype=np.int64)
+    num_sp = np.empty(n_nodes, dtype=np.int64)
+    num_leaf = np.empty(n_nodes, dtype=np.int64)
+    so_event = np.full(n_nodes, "L", dtype=object)
+    dup_conf_score = np.zeros(n_nodes, dtype=float)
+    parent = np.full(n_nodes, -999, dtype=np.int64)
+    sister = np.full(n_nodes, -999, dtype=np.int64)
+    child1 = np.full(n_nodes, -999, dtype=np.int64)
+    child2 = np.full(n_nodes, -999, dtype=np.int64)
+    so_event_parent = np.full(n_nodes, "S", dtype=object)
 
     for row_idx, node in enumerate(nodes):
         label = node.branch_id
@@ -378,7 +673,7 @@ def get_misc_node_statistics(tree_file, tax_annot=False):
                 sister[row_idx] = sister_node.branch_id
             else:
                 sister_nodes = node.get_sisters()
-                if len(sister_nodes) == 1:
+                if len(sister_nodes) > 0:
                     sister[row_idx] = sister_nodes[0].branch_id
         if not node.is_leaf:
             if len(node.children) >= 1:
@@ -390,7 +685,7 @@ def get_misc_node_statistics(tree_file, tax_annot=False):
         if (node.up is not None) and (dup_conf_score_by_node.get(node.up, 0.0) > 0):
             so_event_parent[row_idx] = "D"
 
-    return pandas.DataFrame(
+    return pd.DataFrame(
         {
             "branch_id": branch_id,
             "taxon": taxon,
@@ -409,7 +704,33 @@ def get_misc_node_statistics(tree_file, tax_annot=False):
     )
 
 def compute_delta(df, column):
+    if not hasattr(df, 'columns'):
+        raise ValueError("compute_delta requires a dataframe-like input with columns")
+    _validate_column_name(column, "column")
+    required_columns = {'branch_id', 'parent', column}
+    missing_columns = sorted(required_columns - set(df.columns))
+    if len(missing_columns) > 0:
+        raise ValueError(f"compute_delta requires columns: {missing_columns}")
     out = df.copy()
+    _validate_non_missing_series_values(out['branch_id'], "compute_delta branch_id column")
+    _validate_hashable_series_values(out['branch_id'], "compute_delta branch_id column")
+    _validate_hashable_series_values(out['parent'], "compute_delta parent column")
+    if not out['branch_id'].is_unique:
+        raise ValueError("compute_delta requires unique branch_id values")
+    numeric_column = pd.to_numeric(out[column], errors='coerce')
+    invalid_numeric_mask = out[column].notna() & numeric_column.isna()
+    if invalid_numeric_mask.any():
+        invalid_values = sorted(set(out.loc[invalid_numeric_mask, column].astype(str)))
+        raise ValueError(
+            f"compute_delta requires numeric values in column '{column}'; invalid values: {invalid_values}"
+        )
+    non_finite_mask = numeric_column.notna() & (~np.isfinite(numeric_column.to_numpy(dtype=float, copy=False)))
+    if non_finite_mask.any():
+        invalid_values = sorted(set(out.loc[non_finite_mask, column].astype(str)))
+        raise ValueError(
+            f"compute_delta requires finite numeric values in column '{column}'; invalid values: {invalid_values}"
+        )
+    out[column] = numeric_column
     parent_column = f'parent_{column}'
     value_by_label = out.set_index('branch_id')[column]
     out[parent_column] = out['parent'].map(value_by_label)
@@ -418,79 +739,103 @@ def compute_delta(df, column):
     return out
 
 def get_notung_root_stats(file):
+    file = _coerce_path_argument(file, 'file')
     out = {}
-    with open(file) as f:
-        for line in f:
-            if 'Number of optimal roots' in line:
-                m = NOTUNG_OPT_ROOT_RE.search(line)
-                if m is not None:
-                    out['ntg_num_opt_root'] = int(m.group(1))
-            if 'Best rooting score:' in line:
-                m = NOTUNG_BEST_SCORE_RE.search(line)
-                if m is not None:
-                    out['ntg_best_root_score'] = float(m.group(1))
-                    out['ntg_worst_root_score'] = float(m.group(2))
+    try:
+        with open(file) as f:
+            for line in f:
+                m_opt = NOTUNG_OPT_ROOT_RE.search(line)
+                if m_opt is not None:
+                    out['ntg_num_opt_root'] = int(m_opt.group(1).replace(',', ''))
+                m_best = NOTUNG_BEST_SCORE_RE.search(line)
+                if m_best is not None:
+                    try:
+                        best_score = _parse_float_locale(m_best.group(1))
+                        worst_score = _parse_float_locale(m_best.group(2))
+                    except ValueError:
+                        continue
+                    out['ntg_best_root_score'] = best_score
+                    out['ntg_worst_root_score'] = worst_score
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ValueError(f"Failed to read file: {file}") from exc
     return out
 
 def get_notung_reconcil_stats(file):
+    file = _coerce_path_argument(file, 'file')
     out = {}
-    with open(file) as f:
-        it = iter(f)
-        for line in it:
-            if 'Reconciliation Information' in line:
-                dup_line = next(it, None)
-                codiv_line = next(it, None)
-                transfer_line = next(it, None)
-                loss_line = next(it, None)
-                if (dup_line is not None) and (codiv_line is not None) and (transfer_line is not None) and (loss_line is not None):
-                    out['ntg_num_dup'] = int(dup_line.replace('- Duplications: ', ''))
-                    out['ntg_num_codiv'] = int(codiv_line.replace('- Co-Divergences: ', ''))
-                    out['ntg_num_transfer'] = int(transfer_line.replace('- Transfers: ', ''))
-                    out['ntg_num_loss'] = int(loss_line.replace('- Losses: ', ''))
-            if 'Tree Without Losses' in line:
-                _ = next(it, None)
-                _ = next(it, None)
-                _ = next(it, None)
-                polytomy_line = next(it, None)
-                if polytomy_line is not None:
-                    out['ntg_num_polytomy'] = int(polytomy_line.replace('- Polytomies: ', ''))
+    count_patterns = [
+        ('ntg_num_dup', NOTUNG_DUP_RE),
+        ('ntg_num_codiv', NOTUNG_CODIV_RE),
+        ('ntg_num_transfer', NOTUNG_TRANSFER_RE),
+        ('ntg_num_loss', NOTUNG_LOSS_RE),
+        ('ntg_num_polytomy', NOTUNG_POLYTOMY_RE),
+    ]
+    try:
+        with open(file) as f:
+            for line in f:
+                for key, pattern in count_patterns:
+                    m = pattern.search(line)
+                    if m is not None:
+                        out[key] = int(m.group(1).replace(',', ''))
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ValueError(f"Failed to read file: {file}") from exc
     return out
 
 
 def get_root_stats(file):
+    file = _coerce_path_argument(file, 'file')
     out = {}
-    with open(file) as f:
-        for line in f:
-            if 'root positions with rho peak' in line:
-                out['num_rho_peak'] = line.replace(ROOT_POSITIONS_PREFIX, '').count(' ')
-            if 'Returning the' in line:
+    try:
+        with open(file) as f:
+            for line in f:
+                m_pos = ROOT_POSITIONS_RE.search(line)
+                if m_pos is not None:
+                    positions = m_pos.group(1).strip()
+                    if positions == '':
+                        out['num_rho_peak'] = 0
+                    else:
+                        tokens = [tok for tok in re.split(r'[\s,]+', positions) if tok != '']
+                        placeholder_tokens = {'-', 'none', 'na', 'n/a', 'null'}
+                        valid_tokens = [tok for tok in tokens if tok.lower() not in placeholder_tokens]
+                        out['num_rho_peak'] = len(valid_tokens)
                 m = ROOT_RETURNING_RE.search(line)
                 if m is not None:
-                    out['rooting_method'] = m.group(1).replace('first ', '')
+                    rooting_method = m.group(1).strip()
+                    if rooting_method.lower().startswith('first '):
+                        rooting_method = rooting_method[6:].strip()
+                    out['rooting_method'] = rooting_method
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ValueError(f"Failed to read file: {file}") from exc
     return out
 
 def get_aln_stats(file):
+    file = _coerce_path_argument(file, 'file')
     out = {}
     seq_lens_w_gap = []
     seq_lens = []
     seq_w_gap_len = 0
     seq_len = 0
     has_sequence = False
-    with open(file) as f:
-        for line in f:
-            if line.startswith('>'):
-                if has_sequence:
-                    seq_lens_w_gap.append(seq_w_gap_len)
-                    seq_lens.append(seq_len)
-                seq_w_gap_len = 0
-                seq_len = 0
-                has_sequence = True
-                continue
-            seq_line = line.strip()
-            if not seq_line:
-                continue
-            seq_w_gap_len += len(seq_line)
-            seq_len += len(seq_line) - seq_line.count('-')
+    try:
+        with open(file) as f:
+            for line in f:
+                if line.startswith('>'):
+                    if has_sequence:
+                        seq_lens_w_gap.append(seq_w_gap_len)
+                        seq_lens.append(seq_len)
+                    seq_w_gap_len = 0
+                    seq_len = 0
+                    has_sequence = True
+                    continue
+                seq_line = line.strip()
+                if not seq_line:
+                    continue
+                if not has_sequence:
+                    raise ValueError("alignment file must be FASTA-formatted with header lines starting with '>'")
+                seq_w_gap_len += len(seq_line)
+                seq_len += len(seq_line) - seq_line.count('-')
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ValueError(f"Failed to read file: {file}") from exc
     if has_sequence:
         seq_lens_w_gap.append(seq_w_gap_len)
         seq_lens.append(seq_len)
@@ -511,26 +856,83 @@ def get_aln_stats(file):
 
 def get_iqtree_model_stats(file):
     out = {}
-    with gzip.open(file, 'rb') as f:
-        for line in f:
-            decoded = line.decode()
-            if 'best_model_AIC:' in decoded:
-                out['iqtree_best_AIC'] = decoded.replace('best_model_AIC: ', '').replace('\n', '')
-            if 'best_model_AICc:' in decoded:
-                out['iqtree_best_AICc'] = decoded.replace('best_model_AICc: ', '').replace('\n', '')
-            if 'best_model_BIC:' in decoded:
-                out['iqtree_best_BIC'] = decoded.replace('best_model_BIC: ', '').replace('\n', '')
+    file = _coerce_path_argument(file, 'file')
+    try:
+        with gzip.open(file, 'rb') as f:
+            for line in f:
+                decoded = line.decode()
+                if 'best_model_AIC:' in decoded:
+                    out['iqtree_best_AIC'] = decoded.replace('best_model_AIC: ', '').replace('\n', '')
+                if 'best_model_AICc:' in decoded:
+                    out['iqtree_best_AICc'] = decoded.replace('best_model_AICc: ', '').replace('\n', '')
+                if 'best_model_BIC:' in decoded:
+                    out['iqtree_best_BIC'] = decoded.replace('best_model_BIC: ', '').replace('\n', '')
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"gzip file must contain UTF-8 text: {file}") from exc
+    except OSError as exc:
+        raise ValueError(f"file is not a readable gzip file: {file}") from exc
     return out
 
 
 
 def regime2tree(file):
-    df = pandas.read_csv(file, sep='\t', header=0, index_col=False)
+    file = _coerce_path_argument(file, 'file')
+    try:
+        df = pd.read_csv(file, sep='\t', header=0, index_col=False)
+    except (OSError, UnicodeDecodeError, pd.errors.ParserError, pd.errors.EmptyDataError) as exc:
+        raise ValueError(f"Failed to read file as UTF-8 tab-separated text: {file}") from exc
+    if df.shape[0] == 0:
+        raise ValueError("regime2tree requires at least one data row")
+    required_columns = {'param', 'regime'}
+    missing_columns = sorted(required_columns - set(df.columns))
+    if len(missing_columns) > 0:
+        raise ValueError(f"regime2tree requires columns: {missing_columns}")
+    regime_numeric = pd.to_numeric(df['regime'], errors='coerce')
+    invalid_regime_mask = df['regime'].notna() & regime_numeric.isna()
+    if invalid_regime_mask.any():
+        invalid_values = sorted(set(df.loc[invalid_regime_mask, 'regime'].astype(str)))
+        raise ValueError(f"regime column must be numeric or NaN; invalid values: {invalid_values}")
+    non_finite_regime_mask = regime_numeric.notna() & (~np.isfinite(regime_numeric.to_numpy(dtype=float, copy=False)))
+    if non_finite_regime_mask.any():
+        invalid_values = sorted(set(df.loc[non_finite_regime_mask, 'regime'].astype(str)))
+        raise ValueError(f"regime column must contain finite numeric values; invalid values: {invalid_values}")
+    non_integer_regime_mask = regime_numeric.notna() & (regime_numeric != np.floor(regime_numeric))
+    if non_integer_regime_mask.any():
+        invalid_values = sorted(set(df.loc[non_integer_regime_mask, 'regime'].astype(str)))
+        raise ValueError(f"regime column must contain integer IDs; invalid values: {invalid_values}")
+    negative_regime_mask = regime_numeric.notna() & (regime_numeric < 0)
+    if negative_regime_mask.any():
+        invalid_values = sorted(set(df.loc[negative_regime_mask, 'regime'].astype(str)))
+        raise ValueError(f"regime column must contain non-negative IDs; invalid values: {invalid_values}")
+    too_large_regime_mask = regime_numeric.notna() & (regime_numeric > INT64_MAX)
+    if too_large_regime_mask.any():
+        invalid_values = sorted(set(df.loc[too_large_regime_mask, 'regime'].astype(str)))
+        raise ValueError(
+            f"regime column must be <= {INT64_MAX} to avoid integer overflow; invalid values: {invalid_values}"
+        )
+    df = df.copy()
+    df['regime'] = regime_numeric
     out = {}
-    out['num_regime'] = int(df['regime'].fillna(0).max() + 1)
+    non_nan_regimes = df['regime'].dropna()
+    if non_nan_regimes.shape[0] == 0:
+        out['num_regime'] = 0
+    else:
+        out['num_regime'] = int(non_nan_regimes.max() + 1)
     param_rows = df.loc[df['regime'].isnull(), :]
+    invalid_param_mask = param_rows["param"].isna() | (param_rows["param"].astype(str).str.strip() == "")
+    if invalid_param_mask.any():
+        raise ValueError("regime2tree requires non-empty param names for rows with missing regime IDs")
     params_set = set(param_rows.loc[:, 'param'].values)
-    traits = list(df.columns[3:])
+    non_trait_columns = {"node_name", "param", "regime"}
+    traits = [column_name for column_name in df.columns if column_name not in non_trait_columns]
+    if len(traits) == 0:
+        raise ValueError("regime2tree requires at least one trait column after node_name/param/regime")
+    if param_rows.shape[0] > 0:
+        for param, param_df in param_rows.groupby("param", dropna=False):
+            if param_df.loc[:, traits].drop_duplicates().shape[0] > 1:
+                raise ValueError(
+                    f"regime2tree contains conflicting values for param '{param}' in trait columns"
+                )
     dedup = param_rows.drop_duplicates(subset='param', keep='first')
     rows = dedup.loc[:, ['param'] + traits].to_numpy()
     for row in rows:
@@ -538,24 +940,80 @@ def regime2tree(file):
         out.update({f'{param}_{trait}': value for trait, value in zip(traits, row[1:])})
     if all(key in params_set for key in ['alpha', 'sigma2']):
         for trait in traits:
-            out['gamma_' + trait] = out['sigma2_' + trait] / (2 * out['alpha_' + trait])
+            alpha_key = 'alpha_' + trait
+            sigma_key = 'sigma2_' + trait
+            if (alpha_key not in out) or (sigma_key not in out):
+                continue
+            try:
+                alpha_value = float(out[alpha_key])
+                sigma_value = float(out[sigma_key])
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"alpha/sigma2 values must be numeric to compute gamma for trait '{trait}'"
+                ) from exc
+            if (not np.isfinite(alpha_value)) or (not np.isfinite(sigma_value)):
+                raise ValueError(
+                    f"alpha/sigma2 values must be finite to compute gamma for trait '{trait}'"
+                )
+            if alpha_value == 0:
+                raise ValueError(
+                    f"alpha_{trait} must be non-zero to compute gamma_{trait}"
+                )
+            out['gamma_' + trait] = sigma_value / (2 * alpha_value)
     return out
 
 
 def get_dating_method(file):
-    with open(file) as f:
-        return f.read().replace('\n', '')
+    file = _coerce_path_argument(file, 'file')
+    try:
+        with open(file) as f:
+            return f.read().replace('\n', '')
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ValueError(f"Failed to read file: {file}") from exc
 
 
 def get_most_recent(b, nl, og, target_col, target_value, return_col, og_col='orthogroup'):
+    """Return the nearest node value on the nl->root path matching a target state.
+
+    If the path cannot be followed safely (missing nodes, missing parent, or cycles),
+    this function returns np.nan.
+    """
+    if not hasattr(b, 'columns'):
+        raise ValueError("get_most_recent requires a dataframe-like input with columns")
+    _validate_column_name(target_col, "target_col")
+    _validate_column_name(return_col, "return_col")
+    _validate_column_name(og_col, "og_col")
+    try:
+        hash(nl)
+    except TypeError as exc:
+        raise ValueError("nl must be a hashable scalar branch_id value") from exc
+    try:
+        hash(og)
+    except TypeError as exc:
+        raise ValueError("og must be a hashable value comparable to the orthogroup column") from exc
+    required_columns = {'branch_id', 'parent', target_col, return_col, og_col}
+    missing_columns = sorted(required_columns - set(b.columns))
+    if len(missing_columns) > 0:
+        raise ValueError(f"get_most_recent requires columns: {missing_columns}")
     b_og = b.loc[b[og_col] == og, ['branch_id', 'parent', target_col, return_col]]
+    _validate_non_missing_series_values(b_og['branch_id'], "get_most_recent branch_id column")
+    _validate_hashable_series_values(b_og['branch_id'], "get_most_recent branch_id column")
+    _validate_hashable_series_values(b_og['parent'], "get_most_recent parent column")
     b_og = b_og.drop_duplicates(subset='branch_id', keep='first').set_index('branch_id', drop=False)
-    root_nl = b_og.index.max()
+    if b_og.empty or (nl not in b_og.index):
+        return np.nan
     current_nl = nl
-    while current_nl != root_nl:
+    visited_nl = set()
+    while True:
+        if current_nl in visited_nl:
+            return np.nan
+        if current_nl not in b_og.index:
+            return np.nan
+        visited_nl.add(current_nl)
         current_value = b_og.at[current_nl, target_col]
         if current_value == target_value:
             return b_og.at[current_nl, return_col]
-        else:
-            current_nl = b_og.at[current_nl, 'parent']
-    return numpy.nan  # No target event found between the nl node and the root
+        current_parent = b_og.at[current_nl, 'parent']
+        if pd.isna(current_parent):
+            return np.nan
+        current_nl = current_parent
