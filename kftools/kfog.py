@@ -10,9 +10,11 @@ import pandas as pd
 try:
     from .kfexpression import calc_complementarity, calc_tau
     from .kfphylo import add_numerical_node_labels, check_ultrametric, load_phylo_tree, taxonomic_annotation
+    from .kfspecies import parse_species_label
 except ImportError:
     from kfexpression import calc_complementarity, calc_tau
     from kfphylo import add_numerical_node_labels, check_ultrametric, load_phylo_tree, taxonomic_annotation
+    from kfspecies import parse_species_label
 
 NOTUNG_OPT_ROOT_RE = re.compile(
     r"Number of optimal roots:\s*([0-9][0-9,]*)\s*out of\s*([0-9][0-9,]*)",
@@ -223,8 +225,12 @@ def nwk2table(tree, attr='', age=False, parent=False, sister=False):
     df = pd.DataFrame(data)
     return df
 
-def node_gene2species(gene_tree, species_tree, is_ultrametric=False):
+def node_gene2species(gene_tree, species_tree, is_ultrametric=False, species_parser=None, parser=None):
     is_ultrametric = _validate_boolean_flag(is_ultrametric, "is_ultrametric")
+    if parser is not None:
+        if species_parser is not None:
+            raise ValueError("Use only one of species_parser or parser")
+        species_parser = parser
     if not hasattr(gene_tree, "traverse"):
         try:
             gene_tree = load_phylo_tree(gene_tree, parser=1)
@@ -245,9 +251,18 @@ def node_gene2species(gene_tree, species_tree, is_ultrametric=False):
         raise ValueError(
             "species_tree leaf names must be non-empty strings for node_gene2species"
         )
+    species_label_by_leaf = {}
     species_name_counts = {}
-    for species_leaf_name in species_leaf_names:
-        species_name_counts[species_leaf_name] = species_name_counts.get(species_leaf_name, 0) + 1
+    for species_leaf in species_tree.leaves():
+        try:
+            parsed_species = parse_species_label(species_leaf.name, species_parser=species_parser)
+        except ValueError as exc:
+            raise ValueError(
+                f"species_tree leaf name must contain species information with '_': {species_leaf.name}"
+            ) from exc
+        species_label = parsed_species.species_label
+        species_label_by_leaf[species_leaf] = species_label
+        species_name_counts[species_label] = species_name_counts.get(species_label, 0) + 1
     duplicate_species_names = sorted(
         [species_leaf_name for species_leaf_name, species_count in species_name_counts.items() if species_count > 1]
     )
@@ -271,12 +286,14 @@ def node_gene2species(gene_tree, species_tree, is_ultrametric=False):
         if not species_is_ultrametric:
             raise ValueError("species_tree must be ultrametric when is_ultrametric=True")
     for leaf in gene_tree2.leaves():
-        leaf_name_split = leaf.name.split("_", 2)
-        if len(leaf_name_split) < 2:
-            raise ValueError(f"Gene leaf name must contain species information with '_': {leaf.name}")
-        binom_name = leaf_name_split[0] + "_" + leaf_name_split[1]
-        leaf.name = binom_name
-    tip_set_diff = set(gene_tree2.leaf_names()) - set(species_tree.leaf_names())
+        try:
+            parsed_species = parse_species_label(leaf.name, species_parser=species_parser)
+        except ValueError as exc:
+            raise ValueError(
+                f"Gene leaf name must contain species information with '_': {leaf.name}"
+            ) from exc
+        leaf.name = parsed_species.species_label
+    tip_set_diff = set(gene_tree2.leaf_names()) - set(species_name_counts.keys())
     if tip_set_diff:
         sys.stderr.write(f"Warning. A total of {len(tip_set_diff)} species are missing in the species tree: {str(tip_set_diff)}\n")
     if is_ultrametric:
@@ -284,8 +301,13 @@ def node_gene2species(gene_tree, species_tree, is_ultrametric=False):
     else:
         cn = ["branch_id", "spnode_coverage"]
     species_nodes = list(species_tree.traverse(strategy="postorder"))
-    species_names = {sn: (sn.name or '').replace('\'', '') for sn in species_nodes}
-    species_leaf_node = {leaf.name: leaf for leaf in species_tree.leaves()}
+    species_names = {}
+    for sn in species_nodes:
+        if sn.is_leaf:
+            species_names[sn] = species_label_by_leaf[sn].replace('\'', '')
+        else:
+            species_names[sn] = (sn.name or '').replace('\'', '')
+    species_leaf_node = {species_label_by_leaf[leaf]: leaf for leaf in species_tree.leaves()}
     species_depth = {}
     for sn in species_tree.traverse(strategy="preorder"):
         species_depth[sn] = 0 if sn.is_root else (species_depth[sn.up] + 1)
@@ -583,8 +605,12 @@ def ou2table(regime_file, leaf_file, input_tree_file):
     df["mu_complementarity"] = mu_complementarity
     return df.loc[:, cn]
 
-def get_misc_node_statistics(tree_file, tax_annot=False):
+def get_misc_node_statistics(tree_file, tax_annot=False, species_parser=None, parser=None):
     tax_annot = _validate_boolean_flag(tax_annot, "tax_annot")
+    if parser is not None:
+        if species_parser is not None:
+            raise ValueError("Use only one of species_parser or parser")
+        species_parser = parser
     try:
         tree = load_phylo_tree(tree_file, parser=1)
     except TypeError as exc:
@@ -595,15 +621,16 @@ def get_misc_node_statistics(tree_file, tax_annot=False):
     cn = cn1 + cn2
     nodes = list(tree.traverse())
     if tax_annot:
-        tree = taxonomic_annotation(tree)
+        tree = taxonomic_annotation(tree, species_parser=species_parser)
     else:
         for node in nodes:
             node.taxid = -999
             if node.is_leaf:
-                name_split = node.name.split('_', 2)
-                if len(name_split) >= 2:
-                    node.sci_name = name_split[0] + ' ' + name_split[1]
-                else:
+                try:
+                    node.sci_name = parse_species_label(
+                        node.name, species_parser=species_parser
+                    ).scientific_name
+                except ValueError:
                     node.sci_name = node.name
             else:
                 node.sci_name = ''

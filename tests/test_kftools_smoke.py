@@ -20,6 +20,7 @@ from kftools import kfog
 from kftools import kfphylo
 from kftools import kfplot
 from kftools import kfseq
+from kftools import kfspecies
 from kftools import kfstat
 from kftools import kfutil
 
@@ -389,6 +390,65 @@ class TestKFToolsSmoke(unittest.TestCase):
         with mock.patch("kftools.kfphylo.ete4.NCBITaxa", return_value=DummyNcbiAnnotateFailure()):
             with self.assertRaisesRegex(ValueError, "Failed to annotate tree with NCBI taxonomy"):
                 kfphylo.taxonomic_annotation(tree)
+
+    def test_kfphylo_taxonomic_annotation_uses_species_parser_without_rewriting_labels(self):
+        class DummyNcbi:
+            def __init__(self):
+                self.names = None
+                self.annotated = False
+
+            def get_name_translator(self, names):
+                self.names = sorted(names)
+                return {"Amoeba": [2812], "Dictyostelium discoideum": [5786]}
+
+            def annotate_tree(self, tree, taxid_attr="taxid"):
+                self.annotated = True
+
+        tree = ete4.PhyloTree(
+            "(Dictyostelium_cf_discoideum|gene1:1,Amoeba_sp_JDSRuffled|gene2:1);",
+            parser=1,
+        )
+        dummy_ncbi = DummyNcbi()
+        with mock.patch("kftools.kfphylo.ete4.NCBITaxa", return_value=dummy_ncbi):
+            out = kfphylo.taxonomic_annotation(tree, species_parser="taxonomic")
+        self.assertEqual(dummy_ncbi.names, ["Amoeba", "Dictyostelium discoideum"])
+        self.assertTrue(dummy_ncbi.annotated)
+        self.assertEqual(
+            [leaf.name for leaf in out.leaves()],
+            ["Dictyostelium_cf_discoideum|gene1", "Amoeba_sp_JDSRuffled|gene2"],
+        )
+        self.assertEqual(
+            [leaf.sci_name for leaf in out.leaves()],
+            ["Dictyostelium cf. discoideum", "Amoeba sp. JDSRuffled"],
+        )
+        self.assertEqual(
+            [leaf.taxonomy_query for leaf in out.leaves()],
+            ["Dictyostelium discoideum", "Amoeba"],
+        )
+
+    def test_kfspecies_taxonomic_parser_supports_natural_order_labels(self):
+        proximity = kfspecies.parse_species_label(
+            "Dictyostelium_discoideum_cf_gene1",
+            species_parser="taxonomic",
+        )
+        self.assertEqual(proximity.species_label, "Dictyostelium_cf_discoideum")
+        self.assertEqual(proximity.scientific_name, "Dictyostelium cf. discoideum")
+        self.assertEqual(proximity.taxonomy_query, "Dictyostelium discoideum")
+
+        genus_only = kfspecies.parse_species_label(
+            "Amoeba_sp_JDSRuffled_gene2",
+            species_parser="taxonomic",
+        )
+        self.assertEqual(genus_only.species_label, "Amoeba_sp_JDSRuffled")
+        self.assertEqual(genus_only.taxonomy_query, "Amoeba")
+
+        ranked = kfspecies.parse_species_label(
+            "Bacillus_subtilis_subsp_168_gene3",
+            species_parser="taxonomic",
+        )
+        self.assertEqual(ranked.species_label, "Bacillus_subtilis_subsp_168")
+        self.assertEqual(ranked.scientific_name, "Bacillus subtilis subsp. 168")
+        self.assertEqual(ranked.taxonomy_query, "Bacillus subtilis")
 
     def test_kfseq(self):
         codon_freqs = {"AAA": 0.5, "TTT": 0.5}
@@ -870,6 +930,88 @@ class TestKFToolsSmoke(unittest.TestCase):
             kfog.node_gene2species(gene_tree, 0, is_ultrametric=False)
         with self.assertRaisesRegex(ValueError, "is_ultrametric must be a boolean value"):
             kfog.node_gene2species(gene_tree, species_tree, is_ultrametric="False")
+
+    def test_kfog_node_gene2species_species_parsers(self):
+        def coverage_signature(df):
+            signature = []
+            for value in df.sort_values("branch_id")["spnode_coverage"].tolist():
+                tokens = [token for token in str(value).split(",") if token != ""]
+                signature.append(len(tokens))
+            return signature
+
+        species_tree_legacy = ete4.PhyloTree("((A_x:1,B_x:1):1,C_x:2);", parser=1)
+        gene_tree_legacy = ete4.PhyloTree("((A_x_g1:1,B_x_g2:1):1,C_x_g3:2);", parser=1)
+        out_legacy = kfog.node_gene2species(
+            gene_tree_legacy,
+            species_tree_legacy,
+            is_ultrametric=False,
+        )
+
+        species_tree_taxonomic = ete4.PhyloTree(
+            "((Dictyostelium_cf_discoideum:1,Amoeba_sp_JDSRuffled:1):1,Bacillus_subtilis_subsp_168:2);",
+            parser=1,
+        )
+        gene_tree_taxonomic = ete4.PhyloTree(
+            "((Dictyostelium_cf_discoideum_g1:1,Amoeba_sp_JDSRuffled_g2:1):1,Bacillus_subtilis_subsp_168_g3:2);",
+            parser=1,
+        )
+        out_taxonomic = kfog.node_gene2species(
+            gene_tree_taxonomic,
+            species_tree_taxonomic,
+            is_ultrametric=False,
+            species_parser="taxonomic",
+        )
+
+        regex_parser = {
+            "type": "regex",
+            "pattern": r"sp(?P<genus>[A-Z])_(?P<species>[a-z])zz(?:_g\d+)?",
+        }
+        species_tree_regex = ete4.PhyloTree("((spA_xzz:1,spB_xzz:1):1,spC_xzz:2);", parser=1)
+        gene_tree_regex = ete4.PhyloTree("((spA_xzz_g1:1,spB_xzz_g2:1):1,spC_xzz_g3:2);", parser=1)
+        out_regex = kfog.node_gene2species(
+            gene_tree_regex,
+            species_tree_regex,
+            is_ultrametric=False,
+            species_parser=regex_parser,
+        )
+
+        legacy_signature = coverage_signature(out_legacy)
+        self.assertEqual(sorted(legacy_signature), sorted(coverage_signature(out_taxonomic)))
+        self.assertEqual(sorted(legacy_signature), sorted(coverage_signature(out_regex)))
+        self.assertEqual(
+            set(value for value in out_taxonomic["spnode_coverage"].tolist() if value != ""),
+            {
+                "Amoeba_sp_JDSRuffled",
+                "Bacillus_subtilis_subsp_168",
+                "Dictyostelium_cf_discoideum",
+            },
+        )
+
+    def test_species_parser_changes_do_not_regress_safe_utilities(self):
+        tree_from = ete4.PhyloTree("((A:1,B:1):2,(C:1,D:1):2);", parser=1)
+        tree_to = ete4.PhyloTree("((A:1,B:1):2,(C:1,D:1):2);", parser=1)
+        rerooted = kfphylo.transfer_root(tree_to=tree_to, tree_from=tree_from)
+        self.assertEqual(
+            {frozenset(child.leaf_names()) for child in rerooted.children},
+            {frozenset(["A", "B"]), frozenset(["C", "D"])},
+        )
+
+        nuc_freqs = [
+            {"A": 0.25, "T": 0.25, "C": 0.25, "G": 0.25},
+            {"A": 0.10, "T": 0.40, "C": 0.20, "G": 0.30},
+            {"A": 0.30, "T": 0.20, "C": 0.10, "G": 0.40},
+        ]
+        thetas = kfseq.nuc_freq2theta(nuc_freqs)
+        self.assertEqual(len(thetas), 3)
+        self.assertTrue(all("theta" in theta_row for theta_row in thetas))
+
+        tree = ete4.PhyloTree("(A:2,B:1);", parser=1)
+        subroot_thetas = {
+            "A": [{"theta": 0.1, "theta1": 0.3, "theta2": 0.7}] * 3,
+            "B": [{"theta": 0.9, "theta1": 0.7, "theta2": 0.3}] * 3,
+        }
+        root_thetas = kfseq.weighted_mean_root_thetas(subroot_thetas, tree, model="F3X4")
+        self.assertAlmostEqual(root_thetas[0]["theta"], 0.1 + (0.9 - 0.1) * (2.0 / 3.0))
 
     def test_kfog_ou2table(self):
         with tempfile.NamedTemporaryFile("w", delete=False) as regime_tmp:

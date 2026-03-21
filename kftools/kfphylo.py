@@ -7,6 +7,11 @@ import warnings
 import ete4
 import numpy as np
 
+try:
+    from .kfspecies import parse_species_label
+except ImportError:
+    from kfspecies import parse_species_label
+
 def _load_tree_or_value_error(tree_source, parser=1, argument_name="tree_source"):
     try:
         return load_phylo_tree(tree_source, parser=parser)
@@ -367,35 +372,40 @@ def check_ultrametric(tree, tol=0):
     return is_ultrametric
 
 
-def taxonomic_annotation(tree):
+def taxonomic_annotation(tree, species_parser=None, parser=None):
+    if parser is not None:
+        if species_parser is not None:
+            raise ValueError("Use only one of species_parser or parser")
+        species_parser = parser
     tree = _load_tree_or_value_error(tree, parser=1, argument_name="tree")
     leaves = list(tree.leaves())
-    sci_names = []
+    taxonomy_queries = []
     for leaf in leaves:
         leaf_name = leaf.name
         if (not isinstance(leaf_name, str)) or (leaf_name.strip() == ""):
             raise ValueError(f"Leaf name must be a non-empty string containing genus and species separated by '_': {leaf_name}")
-        leaf_name_split = leaf_name.split("_")
-        if len(leaf_name_split) < 2:
-            raise ValueError(f"Leaf name must contain genus and species separated by '_': {leaf_name}")
-        binom_name = leaf_name_split[0] + " " + leaf_name_split[1]
-        leaf.sci_name = binom_name
-        sci_names.append(leaf.sci_name)
+        try:
+            parsed_species = parse_species_label(leaf_name, species_parser=species_parser)
+        except ValueError as exc:
+            raise ValueError(f"Leaf name must contain genus and species separated by '_': {leaf_name}") from exc
+        leaf.sci_name = parsed_species.scientific_name
+        leaf.taxonomy_query = parsed_species.taxonomy_query
+        taxonomy_queries.append(leaf.taxonomy_query)
     try:
         ncbi = ete4.NCBITaxa()
     except Exception as exc:
         raise ValueError("Failed to initialize NCBITaxa database") from exc
     try:
-        name2id = ncbi.get_name_translator(names=list(set(sci_names)))
+        name2id = ncbi.get_name_translator(names=list(set(taxonomy_queries)))
     except Exception as exc:
         raise ValueError("Failed to query scientific names in NCBITaxa") from exc
     for leaf in leaves:
-        taxids = name2id.get(leaf.sci_name, [])
+        taxids = name2id.get(leaf.taxonomy_query, [])
         if len(taxids) == 0:
-            raise ValueError(f"No taxid found for scientific name: {leaf.sci_name}")
+            raise ValueError(f"No taxid found for scientific name: {leaf.taxonomy_query}")
         if len(taxids) > 1:
             warnings.warn(
-                f"{leaf.sci_name} has {len(taxids)} taxids; using the first entry.",
+                f"{leaf.taxonomy_query} has {len(taxids)} taxids; using the first entry.",
                 RuntimeWarning,
             )
         leaf.taxid = taxids[0]
