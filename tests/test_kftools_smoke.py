@@ -71,7 +71,8 @@ class TestKFToolsSmoke(unittest.TestCase):
         tau_single_col = kfexpression.calc_tau(df, "a", unlog2=False, unPlus1=False)
         self.assertEqual(len(tau_single_col), 2)
         self.assertAlmostEqual(kfexpression.calc_complementarity([1, 2], [1, 1]), 0.25)
-        self.assertAlmostEqual(kfexpression.calc_complementarity([1, 2, 3], [1]), 0.0)
+        with self.assertRaisesRegex(ValueError, "same number of values"):
+            kfexpression.calc_complementarity([1, 2, 3], [1])
         with self.assertRaisesRegex(ValueError, "at least one value"):
             kfexpression.calc_complementarity([], [1])
         with self.assertRaisesRegex(ValueError, "numeric values"):
@@ -381,15 +382,21 @@ class TestKFToolsSmoke(unittest.TestCase):
                 raise RuntimeError("boom")
 
         tree = ete4.PhyloTree("(Homo_sapiens:1,Mus_musculus:1);", parser=1)
-        with mock.patch("kftools.kfphylo.ete4.NCBITaxa", side_effect=RuntimeError("boom")):
-            with self.assertRaisesRegex(ValueError, "Failed to initialize NCBITaxa database"):
-                kfphylo.taxonomic_annotation(tree)
-        with mock.patch("kftools.kfphylo.ete4.NCBITaxa", return_value=DummyNcbiGetTranslatorFailure()):
-            with self.assertRaisesRegex(ValueError, "Failed to query scientific names in NCBITaxa"):
-                kfphylo.taxonomic_annotation(tree)
-        with mock.patch("kftools.kfphylo.ete4.NCBITaxa", return_value=DummyNcbiAnnotateFailure()):
-            with self.assertRaisesRegex(ValueError, "Failed to annotate tree with NCBI taxonomy"):
-                kfphylo.taxonomic_annotation(tree)
+        with (
+            mock.patch("kftools.kfphylo.ete4.NCBITaxa", side_effect=RuntimeError("boom")),
+            self.assertRaisesRegex(ValueError, "Failed to initialize NCBITaxa database"),
+        ):
+            kfphylo.taxonomic_annotation(tree)
+        with (
+            mock.patch("kftools.kfphylo.ete4.NCBITaxa", return_value=DummyNcbiGetTranslatorFailure()),
+            self.assertRaisesRegex(ValueError, "Failed to query scientific names in NCBITaxa"),
+        ):
+            kfphylo.taxonomic_annotation(tree)
+        with (
+            mock.patch("kftools.kfphylo.ete4.NCBITaxa", return_value=DummyNcbiAnnotateFailure()),
+            self.assertRaisesRegex(ValueError, "Failed to annotate tree with NCBI taxonomy"),
+        ):
+            kfphylo.taxonomic_annotation(tree)
 
     def test_kfphylo_taxonomic_annotation_uses_species_parser_without_rewriting_labels(self):
         class DummyNcbi:
@@ -473,7 +480,10 @@ class TestKFToolsSmoke(unittest.TestCase):
         }
         root_thetas3 = kfseq.weighted_mean_root_thetas(subroot_thetas3, tree3, model="F3X4")
         self.assertEqual(len(root_thetas3), 3)
-        self.assertAlmostEqual(root_thetas3[0]["theta"], 0.1 + (0.9 - 0.1) * (1.0 / 4.0))
+        expected_theta3 = ((0.1 / 1.0) + (0.5 / 2.0) + (0.9 / 3.0)) / (
+            (1.0 / 1.0) + (1.0 / 2.0) + (1.0 / 3.0)
+        )
+        self.assertAlmostEqual(root_thetas3[0]["theta"], expected_theta3)
         self.assertEqual(kfseq.get_mapnh_thetas("F3X4", []), "F3X4()")
 
     def test_kfseq_robustness_guards(self):
@@ -674,7 +684,7 @@ class TestKFToolsSmoke(unittest.TestCase):
             "C": [{"theta": 0.9}] * 3,
         }
         root_thetas3 = kfseq.weighted_mean_root_thetas(subroot_thetas3, tree3, model="F3X4")
-        self.assertAlmostEqual(root_thetas3[0]["theta"], 0.5)
+        self.assertAlmostEqual(root_thetas3[0]["theta"], (0.1 + 0.3 + 0.9) / 3)
 
     def test_kfseq_weighted_mean_root_thetas_is_independent_of_dict_order(self):
         tree3 = ete4.PhyloTree("(A:1,B:2,C:3);", parser=1)
@@ -737,9 +747,8 @@ class TestKFToolsSmoke(unittest.TestCase):
 
     def test_kfog_nwk2table_age_requires_ultrametric(self):
         non_ultrametric = "((A_a:1,B_b:2):1,C_c:2);"
-        with contextlib.redirect_stderr(io.StringIO()):
-            with self.assertRaisesRegex(ValueError, "ultrametric"):
-                kfog.nwk2table(non_ultrametric, attr="dist", age=True)
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaisesRegex(ValueError, "ultrametric"):
+            kfog.nwk2table(non_ultrametric, attr="dist", age=True)
         with self.assertRaisesRegex(ValueError, "only when attr='dist'"):
             kfog.nwk2table("((A_a:1,B_b:1):1,C_c:2);", attr="support", age=True)
         with self.assertRaisesRegex(ValueError, "age must be a boolean value"):
@@ -887,13 +896,15 @@ class TestKFToolsSmoke(unittest.TestCase):
         self.assertIn("spnode_coverage", out.columns)
         self.assertIn("spnode_age", out.columns)
         self.assertEqual(len(out), len(list(gene_tree.traverse())))
-        with contextlib.redirect_stderr(io.StringIO()):
-            with self.assertRaisesRegex(ValueError, "species_tree must be ultrametric when is_ultrametric=True"):
-                kfog.node_gene2species(
-                    gene_tree,
-                    "((A_x:1,B_x:2):1,(C_x:1,D_x:1):1);",
-                    is_ultrametric=True,
-                )
+        with (
+            contextlib.redirect_stderr(io.StringIO()),
+            self.assertRaisesRegex(ValueError, "species_tree must be ultrametric when is_ultrametric=True"),
+        ):
+            kfog.node_gene2species(
+                gene_tree,
+                "((A_x:1,B_x:2):1,(C_x:1,D_x:1):1);",
+                is_ultrametric=True,
+            )
         species_tree_bad_dist = ete4.PhyloTree("((A_x:1,B_x:1):1,(C_x:1,D_x:1):1);", parser=1)
         species_tree_bad_dist.children[0].dist = None
         with self.assertRaisesRegex(ValueError, "finite non-negative branch lengths"):
@@ -979,7 +990,7 @@ class TestKFToolsSmoke(unittest.TestCase):
         self.assertEqual(sorted(legacy_signature), sorted(coverage_signature(out_taxonomic)))
         self.assertEqual(sorted(legacy_signature), sorted(coverage_signature(out_regex)))
         self.assertEqual(
-            set(value for value in out_taxonomic["spnode_coverage"].tolist() if value != ""),
+            {value for value in out_taxonomic["spnode_coverage"].tolist() if value != ""},
             {
                 "Amoeba_sp_JDSRuffled",
                 "Bacillus_subtilis_subsp_168",

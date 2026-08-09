@@ -30,6 +30,30 @@ def _calc_S2(R, Ri, Ravr):
     return float(np.dot(v, v) / (num_elem - 1))
 
 
+def _validate_bm_options(ttype, alpha):
+    if isinstance(ttype, bool) or (not isinstance(ttype, numbers.Real)):
+        raise ValueError("ttype must be a finite numeric value")
+    ttype = float(ttype)
+    if not math.isfinite(ttype):
+        raise ValueError("ttype must be a finite numeric value")
+    if isinstance(alpha, bool) or (not isinstance(alpha, numbers.Real)):
+        raise ValueError("alpha must be a finite numeric value")
+    alpha = float(alpha)
+    if not math.isfinite(alpha):
+        raise ValueError("alpha must be a finite numeric value")
+    if (alpha <= 0) or (alpha >= 1):
+        raise ValueError("alpha must be between 0 and 1")
+    return ttype, alpha
+
+
+def _bm_p_value(W, f_hat, ttype):
+    if ttype < 0:
+        return float(stats.t.cdf(W, f_hat))
+    if ttype > 0:
+        return float(stats.t.sf(W, f_hat))
+    return float(2 * stats.t.sf(abs(W), f_hat))
+
+
 def bm_test(x, y, ttype=0, alpha=0.05):
     # Copyright (C) 2016 Yukishige Shibata <y-shibat@mtd.biglobe.ne.jp>
     # All rights reserved.
@@ -53,12 +77,7 @@ def bm_test(x, y, ttype=0, alpha=0.05):
       http://oku.edu.mie-u.ac.jp/~okumura/stat/brunner-munzel.html
     """
 
-    if isinstance(ttype, bool) or (not isinstance(ttype, numbers.Real)) or (not np.isfinite(ttype)):
-        raise ValueError("ttype must be a finite numeric value")
-    if isinstance(alpha, bool) or (not isinstance(alpha, numbers.Real)) or (not np.isfinite(alpha)):
-        raise ValueError("alpha must be a finite numeric value")
-    if (alpha <= 0) or (alpha >= 1):
-        raise ValueError("alpha must be between 0 and 1")
+    ttype, alpha = _validate_bm_options(ttype, alpha)
     x = _validate_sample(x, "x")
     y = _validate_sample(y, "y")
     N_x = x.size
@@ -98,19 +117,14 @@ def bm_test(x, y, ttype=0, alpha=0.05):
         raise ValueError("Brunner-Munzel test is undefined because the degree-of-freedom denominator is zero")
     f_hat = f_hat_num / f_hat_den
 
-    int_t = stats.t.ppf(1 - (alpha / 2), f_hat) * math.sqrt(
+    critical_t = float(stats.t.ppf(1 - (alpha / 2), f_hat))
+    int_t = critical_t * math.sqrt(
         (S2_x / (N_x * N_y * N_y)) + (S2_y / (N_x * N_x * N_y))
     )
     C_l = Pest - int_t
     C_h = Pest + int_t
 
-    if ttype < 0:
-        p_value = stats.t.cdf(W, f_hat)
-    elif ttype > 0:
-        p_value = stats.t.sf(W, f_hat)
-    else:
-        p_value = 2 * stats.t.sf(abs(W), f_hat)
-
+    p_value = _bm_p_value(W, f_hat, ttype)
     return W, f_hat, p_value, Pest, C_l, C_h
 
 

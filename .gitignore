@@ -1,2 +1,8 @@
 __pycache__/
 kftools.egg-info/
+.coverage
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/

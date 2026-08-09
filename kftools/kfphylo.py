@@ -1,3 +1,4 @@
+import copy
 import os
 import sys
 from pathlib import Path
@@ -10,7 +11,7 @@ import numpy as np
 try:
     from .kfspecies import parse_species_label
 except ImportError:
-    from kfspecies import parse_species_label
+    from kfspecies import parse_species_label  # type: ignore[no-redef]
 
 def _load_tree_or_value_error(tree_source, parser=1, argument_name="tree_source"):
     try:
@@ -27,39 +28,44 @@ def _validate_boolean_flag(flag_value, argument_name):
     return bool(flag_value)
 
 
-def load_phylo_tree(tree_source, parser=1):
-    if isinstance(tree_source, ete4.PhyloTree):
-        return tree_source
-    if tree_source is None:
-        raise ValueError("tree_source must not be None")
+def _read_newick_source(tree_source):
     if isinstance(tree_source, os.PathLike):
         try:
             tree_source = os.fspath(tree_source)
         except TypeError as exc:
             raise TypeError("tree_source must be a Newick string, path, or ete4.PhyloTree instance") from exc
-    if isinstance(tree_source, str):
-        if tree_source.strip() == "":
-            raise ValueError("tree_source must not be an empty string")
-        tree_path = Path(tree_source)
-        if tree_path.exists():
-            if not tree_path.is_file():
-                raise ValueError(f"Tree path exists but is not a file: {tree_path}")
-            try:
-                with tree_path.open() as f:
-                    tree_source = f.read()
-            except (OSError, UnicodeDecodeError) as exc:
-                raise ValueError(f"Failed to read tree file: {tree_path}") from exc
-            if tree_source.strip() == "":
-                raise ValueError(f"Tree file is empty: {tree_path}")
-        try:
-            return ete4.PhyloTree(tree_source, parser=parser)
-        except FileNotFoundError as exc:
-            raise ValueError(
-                "tree_source is neither a readable tree file path nor a valid Newick string"
-            ) from exc
-        except Exception as exc:
-            raise ValueError("Failed to parse tree_source as a Newick tree") from exc
-    raise TypeError("tree_source must be a Newick string, path, or ete4.PhyloTree instance")
+    if not isinstance(tree_source, str):
+        raise TypeError("tree_source must be a Newick string, path, or ete4.PhyloTree instance")
+    if tree_source.strip() == "":
+        raise ValueError("tree_source must not be an empty string")
+    tree_path = Path(tree_source)
+    if not tree_path.exists():
+        return tree_source, None
+    if not tree_path.is_file():
+        raise ValueError(f"Tree path exists but is not a file: {tree_path}")
+    try:
+        newick = tree_path.read_text()
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ValueError(f"Failed to read tree file: {tree_path}") from exc
+    if newick.strip() == "":
+        raise ValueError(f"Tree file is empty: {tree_path}")
+    return newick, tree_path
+
+
+def load_phylo_tree(tree_source, parser=1):
+    if isinstance(tree_source, ete4.PhyloTree):
+        return tree_source
+    if tree_source is None:
+        raise ValueError("tree_source must not be None")
+    newick, tree_path = _read_newick_source(tree_source)
+    try:
+        return ete4.PhyloTree(newick, parser=parser)
+    except Exception as exc:
+        if tree_path is not None:
+            raise ValueError(f"Failed to parse tree file as Newick: {tree_path}") from exc
+        raise ValueError(
+            "tree_source is neither a readable tree file path nor a valid Newick string"
+        ) from exc
 
 
 def get_tree_height(tree_file):
@@ -116,12 +122,22 @@ def transfer_internal_node_names(tree_to, tree_from):
 
 def fill_internal_node_names(tree):
     tree = _load_tree_or_value_error(tree, parser=1, argument_name="tree")
+    used_names = {
+        node.name
+        for node in tree.traverse()
+        if isinstance(node.name, str) and node.name.strip() != ""
+    }
     counter = 1
     for node in tree.traverse():
         node_name = node.name
         has_missing_name = (node_name is None) or (isinstance(node_name, str) and (node_name.strip() == ""))
         if (not node.is_leaf) and has_missing_name:
-            node.name = 'n' + str(counter)
+            candidate_name = f'n{counter}'
+            while candidate_name in used_names:
+                counter += 1
+                candidate_name = f'n{counter}'
+            node.name = candidate_name
+            used_names.add(candidate_name)
             counter += 1
     return tree
 
@@ -135,7 +151,11 @@ def add_numerical_node_labels(tree):
     """
     tree = _load_tree_or_value_error(tree, parser=1, argument_name="tree")
     all_leaf_names = list(tree.leaf_names())
-    invalid_leaf_names = [leaf_name for leaf_name in all_leaf_names if (not isinstance(leaf_name, str)) or (leaf_name.strip() == "")]
+    invalid_leaf_names = [
+        leaf_name
+        for leaf_name in all_leaf_names
+        if (not isinstance(leaf_name, str)) or (leaf_name.strip() == "")
+    ]
     if len(invalid_leaf_names) > 0:
         raise ValueError(
             "Tree leaf names must be non-empty strings for CSUBST-compatible branch_id assignment"
@@ -149,11 +169,15 @@ def add_numerical_node_labels(tree):
     all_leaf_names = sorted(all_leaf_names)
     leaf_branch_ids = {leaf_name: (1 << i) for i, leaf_name in enumerate(all_leaf_names)}
     nodes = list(tree.traverse())
-    clade_signatures = []
-    for node in nodes:
-        leaf_names = node.leaf_names()
-        clade_signature = sum(leaf_branch_ids[leaf_name] for leaf_name in leaf_names)
-        clade_signatures.append(clade_signature)
+    signature_by_node = {}
+    for node in tree.traverse(strategy="postorder"):
+        if node.is_leaf:
+            signature_by_node[node] = leaf_branch_ids[node.name]
+        else:
+            signature_by_node[node] = sum(
+                signature_by_node[child] for child in node.children
+            )
+    clade_signatures = [signature_by_node[node] for node in nodes]
     sorted_node_indices = sorted(range(len(nodes)), key=lambda idx: clade_signatures[idx])
     rank_by_node_index = {node_index: rank for rank, node_index in enumerate(sorted_node_indices)}
     for node_index, node in enumerate(nodes):
@@ -161,30 +185,38 @@ def add_numerical_node_labels(tree):
     return tree
 
 
-def transfer_root(tree_to, tree_from, verbose=False):
-    verbose = _validate_boolean_flag(verbose, "verbose")
-    tree_to = _load_tree_or_value_error(tree_to, parser=1, argument_name="tree_to")
-    tree_from = _load_tree_or_value_error(tree_from, parser=1, argument_name="tree_from")
-
-    def _validate_transfer_root_leaf_names(leaf_names, tree_name):
-        invalid_leaf_names = [
-            leaf_name
-            for leaf_name in leaf_names
-            if (not isinstance(leaf_name, str)) or (leaf_name.strip() == "")
-        ]
-        if len(invalid_leaf_names) > 0:
-            raise ValueError(
-                f"{tree_name} leaf names must be non-empty strings for transfer_root"
-            )
-        leaf_name_counts = Counter(leaf_names)
-        duplicate_leaf_names = sorted(
-            [leaf_name for leaf_name, count in leaf_name_counts.items() if count > 1]
+def _validate_transfer_root_leaf_names(leaf_names, tree_name):
+    invalid_leaf_names = [
+        leaf_name
+        for leaf_name in leaf_names
+        if (not isinstance(leaf_name, str)) or (leaf_name.strip() == "")
+    ]
+    if len(invalid_leaf_names) > 0:
+        raise ValueError(
+            f"{tree_name} leaf names must be non-empty strings for transfer_root"
         )
-        if len(duplicate_leaf_names) > 0:
-            raise ValueError(
-                f"{tree_name} leaf names must be unique for transfer_root: {duplicate_leaf_names}"
-            )
+    leaf_name_counts = Counter(leaf_names)
+    duplicate_leaf_names = sorted(
+        [leaf_name for leaf_name, count in leaf_name_counts.items() if count > 1]
+    )
+    if len(duplicate_leaf_names) > 0:
+        raise ValueError(
+            f"{tree_name} leaf names must be unique for transfer_root: {duplicate_leaf_names}"
+        )
 
+
+def _resolve_clade_node(tree, clade_leafset):
+    clade_leaf_names = sorted(clade_leafset)
+    if len(clade_leaf_names) == 1:
+        return next((leaf for leaf in tree.leaves() if leaf.name == clade_leaf_names[0]), None)
+    try:
+        clade_node = tree.common_ancestor(clade_leaf_names)
+    except Exception:
+        return None
+    return clade_node if set(clade_node.leaf_names()) == clade_leafset else None
+
+
+def _validate_identical_tip_sets(tree_to, tree_from):
     leaf_names_to_list = list(tree_to.leaf_names())
     leaf_names_from_list = list(tree_from.leaf_names())
     _validate_transfer_root_leaf_names(leaf_names_to_list, "tree_to")
@@ -192,72 +224,58 @@ def transfer_root(tree_to, tree_from, verbose=False):
     leaf_names_to = set(leaf_names_to_list)
     leaf_names_from = set(leaf_names_from_list)
     if leaf_names_to != leaf_names_from:
-        missing_in_tree_to = sorted(leaf_names_from - leaf_names_to)
-        extra_in_tree_to = sorted(leaf_names_to - leaf_names_from)
         raise ValueError(
             "tree_to and tree_from must have identical tips. "
-            f"missing_in_tree_to={missing_in_tree_to}, extra_in_tree_to={extra_in_tree_to}"
+            f"missing_in_tree_to={sorted(leaf_names_from - leaf_names_to)}, "
+            f"extra_in_tree_to={sorted(leaf_names_to - leaf_names_from)}"
         )
 
-    from_children = tree_from.get_children()
-    if len(from_children) != 2:
-        raise ValueError(f"tree_from root must be bifurcating (2 children), got {len(from_children)}")
 
-    split_leafsets = [set(node.leaf_names()) for node in from_children]
-
-    def _resolve_clade_node(tree, clade_leafset):
-        clade_leaf_names = sorted(clade_leafset)
-        if len(clade_leaf_names) == 1:
-            leaf_name = clade_leaf_names[0]
-            for leaf in tree.leaves():
-                if leaf.name == leaf_name:
-                    return leaf
-            return None
-        try:
-            clade_node = tree.common_ancestor(clade_leaf_names)
-        except Exception:
-            return None
-        if set(clade_node.leaf_names()) != clade_leafset:
-            return None
-        return clade_node
-
-    valid_outgroup_indices = [
-        idx for idx, clade_leafset in enumerate(split_leafsets)
-        if _resolve_clade_node(tree_to, clade_leafset) is not None
+def _choose_outgroup_split(tree_to, split_leafsets):
+    valid_indices = [
+        idx for idx, leafset in enumerate(split_leafsets)
+        if _resolve_clade_node(tree_to, leafset) is not None
     ]
-    if len(valid_outgroup_indices) == 0:
-        split_display = [sorted(clade_leafset) for clade_leafset in split_leafsets]
+    if len(valid_indices) == 0:
+        split_display = [sorted(leafset) for leafset in split_leafsets]
         raise ValueError(
             "Failed to transfer root because tree_to does not contain "
             f"the root split from tree_from: {split_display}"
         )
-    if len(valid_outgroup_indices) == 1:
-        outgroup_idx = valid_outgroup_indices[0]
-    else:
-        outgroup_idx = 0 if len(split_leafsets[0]) <= len(split_leafsets[1]) else 1
-    ingroup_idx = 1 - outgroup_idx
+    if len(valid_indices) == 1:
+        return valid_indices[0]
+    return 0 if len(split_leafsets[0]) <= len(split_leafsets[1]) else 1
 
-    outgroups = sorted(split_leafsets[outgroup_idx])
-    ingroups = sorted(split_leafsets[ingroup_idx])
-    # ETE's set_outgroup requires a zero-length root branch on the reroot target tree.
-    tree_to_root_dist = tree_to.dist
-    if tree_to_root_dist is None:
-        tree_to_root_dist = 0.0
-    elif isinstance(tree_to_root_dist, bool) or (
-        not isinstance(tree_to_root_dist, (int, float, np.integer, np.floating))
+
+def _validated_branch_distance(distance, error_prefix, allow_none=False):
+    if (distance is None) and allow_none:
+        return 0.0
+    numeric_description = (
+        "finite numeric values" if error_prefix.endswith("lengths") else "a finite numeric value"
+    )
+    if isinstance(distance, bool) or (
+        not isinstance(distance, (int, float, np.integer, np.floating))
     ):
-        raise ValueError("tree_to root branch length must be a finite numeric value")
-    tree_to_root_dist = float(tree_to_root_dist)
-    if not np.isfinite(tree_to_root_dist):
-        raise ValueError("tree_to root branch length must be a finite numeric value")
-    if tree_to_root_dist < 0:
-        raise ValueError("tree_to root branch length must be non-negative")
-    if tree_to_root_dist != 0.0:
+        raise ValueError(f"{error_prefix} must be {numeric_description}")
+    distance = float(distance)
+    if not np.isfinite(distance):
+        raise ValueError(f"{error_prefix} must be {numeric_description}")
+    if distance < 0:
+        raise ValueError(f"{error_prefix} must be non-negative")
+    return distance
+
+
+def _reroot_to_split(tree_to, split_leafsets, outgroup_idx, verbose):
+    outgroups = sorted(split_leafsets[outgroup_idx])
+    ingroups = sorted(split_leafsets[1 - outgroup_idx])
+    root_dist = _validated_branch_distance(
+        tree_to.dist, "tree_to root branch length", allow_none=True
+    )
+    if root_dist != 0.0:
         tree_to.dist = 0.0
     if verbose:
         print('outgroups:', outgroups)
     tree_to.set_outgroup(ingroups[0])
-
     outgroup_ancestor = _resolve_clade_node(tree_to, set(outgroups))
     if outgroup_ancestor is None:
         raise ValueError(
@@ -266,52 +284,58 @@ def transfer_root(tree_to, tree_from, verbose=False):
         )
     tree_to.set_outgroup(outgroup_ancestor)
 
+
+def _validated_subroot_distances(nodes, tree_name):
+    return [
+        _validated_branch_distance(
+            node.dist, f"{tree_name} root child branch lengths"
+        )
+        for node in nodes
+    ]
+
+
+def _transfer_subroot_distances(subroot_to, subroot_from):
+    total_to = sum(_validated_subroot_distances(subroot_to, "tree_to"))
+    total_from = sum(_validated_subroot_distances(subroot_from, "tree_from"))
+    if total_from <= 0:
+        return
+    dist_by_leafset = {frozenset(node.leaf_names()): node.dist for node in subroot_from}
+    for node_to in subroot_to:
+        node_from_dist = dist_by_leafset.get(frozenset(node_to.leaf_names()))
+        if node_from_dist is None:
+            raise ValueError(
+                "Failed to transfer root because rerooted split in tree_to "
+                "did not match tree_from root split."
+            )
+        node_to.dist = (node_from_dist / total_from) * total_to
+
+
+def transfer_root(tree_to, tree_from, verbose=False):
+    """Return a rerooted copy of ``tree_to`` using the root in ``tree_from``.
+
+    Work is performed on a deep copy so a validation or rerooting failure never
+    leaves the caller's tree partially modified.
+    """
+    verbose = _validate_boolean_flag(verbose, "verbose")
+    tree_to = copy.deepcopy(_load_tree_or_value_error(tree_to, parser=1, argument_name="tree_to"))
+    tree_from = _load_tree_or_value_error(tree_from, parser=1, argument_name="tree_from")
+    _validate_identical_tip_sets(tree_to, tree_from)
+
+    from_children = tree_from.get_children()
+    if len(from_children) != 2:
+        raise ValueError(f"tree_from root must be bifurcating (2 children), got {len(from_children)}")
+
+    split_leafsets = [set(node.leaf_names()) for node in from_children]
+    outgroup_idx = _choose_outgroup_split(tree_to, split_leafsets)
+    _reroot_to_split(tree_to, split_leafsets, outgroup_idx, verbose)
+
     subroot_to = tree_to.get_children()
     if len(subroot_to) != 2:
         raise ValueError(
             "Failed to transfer root because rerooted tree_to root is not bifurcating "
             f"(got {len(subroot_to)} children)."
         )
-    subroot_from = from_children
-
-    def _validated_subroot_distances(nodes, tree_name):
-        distances = []
-        for node in nodes:
-            node_dist = node.dist
-            if isinstance(node_dist, bool) or (not isinstance(node_dist, (int, float, np.integer, np.floating))):
-                raise ValueError(
-                    f"{tree_name} root child branch lengths must be finite numeric values"
-                )
-            node_dist = float(node_dist)
-            if not np.isfinite(node_dist):
-                raise ValueError(
-                    f"{tree_name} root child branch lengths must be finite numeric values"
-                )
-            if node_dist < 0:
-                raise ValueError(
-                    f"{tree_name} root child branch lengths must be non-negative"
-                )
-            distances.append(node_dist)
-        return distances
-
-    subroot_to_distances = _validated_subroot_distances(subroot_to, "tree_to")
-    subroot_from_distances = _validated_subroot_distances(subroot_from, "tree_from")
-    total_subroot_length_to = sum(subroot_to_distances)
-    total_subroot_length_from = sum(subroot_from_distances)
-    if total_subroot_length_from > 0:
-        dist_by_leafset = {
-            frozenset(node.leaf_names()): node.dist
-            for node in subroot_from
-        }
-        for n_to in subroot_to:
-            n_to_leafset = frozenset(n_to.leaf_names())
-            n_from_dist = dist_by_leafset.get(n_to_leafset)
-            if n_from_dist is None:
-                raise ValueError(
-                    "Failed to transfer root because rerooted split in tree_to "
-                    "did not match tree_from root split."
-                )
-            n_to.dist = (n_from_dist / total_subroot_length_from) * total_subroot_length_to
+    _transfer_subroot_distances(subroot_to, from_children)
 
     for n_to in tree_to.traverse():
         if not n_to.name:
@@ -321,13 +345,18 @@ def transfer_root(tree_to, tree_from, verbose=False):
     return tree_to
 
 
-def check_ultrametric(tree, tol=0):
-    tree = _load_tree_or_value_error(tree, parser=1, argument_name="tree")
+def _validate_ultrametric_tolerance(tol):
     if isinstance(tol, bool) or (not isinstance(tol, (int, float, np.integer, np.floating))):
         raise ValueError("tol must be a finite numeric value")
     if not np.isfinite(float(tol)):
         raise ValueError("tol must be a finite numeric value")
     tol = float(tol)
+    if tol < 0:
+        raise ValueError("tol must be non-negative")
+    return tol
+
+
+def _root_to_tip_extrema(tree):
     min_dist = np.inf
     max_dist = -np.inf
     min_dist_leaf = None
@@ -344,46 +373,40 @@ def check_ultrametric(tree, tol=0):
                 max_dist_leaf = node.name
         else:
             for child in node.get_children():
-                child_dist = child.dist
-                if isinstance(child_dist, bool) or (not isinstance(child_dist, (int, float, np.integer, np.floating))):
-                    raise ValueError("All branch lengths must be finite numeric values")
-                if not np.isfinite(float(child_dist)):
-                    raise ValueError("All branch lengths must be finite numeric values")
-                if float(child_dist) < 0:
-                    raise ValueError("All branch lengths must be non-negative")
-                stack.append((child, distance_from_root + float(child_dist)))
-
+                child_dist = _validated_branch_distance(child.dist, "All branch lengths")
+                stack.append((child, distance_from_root + child_dist))
     if np.isinf(min_dist):
         min_dist = 0.0
         max_dist = 0.0
         min_dist_leaf = tree.name
         max_dist_leaf = tree.name
+    return min_dist, max_dist, min_dist_leaf, max_dist_leaf
 
-    if tol == 0:
-        tol = max(max_dist * 0.001, np.finfo(float).eps)
-    if tol < 0:
-        raise ValueError("tol must be non-negative")
+
+def check_ultrametric(tree, tol=0):
+    tree = _load_tree_or_value_error(tree, parser=1, argument_name="tree")
+    tol = _validate_ultrametric_tolerance(tol)
+    min_dist, max_dist, min_dist_leaf, max_dist_leaf = _root_to_tip_extrema(tree)
+
     dif_tree_length = max_dist - min_dist
     is_ultrametric = dif_tree_length <= tol
     if dif_tree_length > tol:
-        sys.stderr.write('(max - min) root-to-tip path ({}) was bigger than tol ({}).\n'.format(dif_tree_length, tol))
-        sys.stderr.write('min_dist_leaf = {:,} in {}\n'.format(min_dist, min_dist_leaf))
-        sys.stderr.write('max_dist_leaf = {:,} in {}\n'.format(max_dist, max_dist_leaf))
+        sys.stderr.write(f'(max - min) root-to-tip path ({dif_tree_length}) was bigger than tol ({tol}).\n')
+        sys.stderr.write(f'min_dist_leaf = {min_dist:,} in {min_dist_leaf}\n')
+        sys.stderr.write(f'max_dist_leaf = {max_dist:,} in {max_dist_leaf}\n')
     return is_ultrametric
 
 
-def taxonomic_annotation(tree, species_parser=None, parser=None):
-    if parser is not None:
-        if species_parser is not None:
-            raise ValueError("Use only one of species_parser or parser")
-        species_parser = parser
-    tree = _load_tree_or_value_error(tree, parser=1, argument_name="tree")
+def _parse_taxonomic_leaves(tree, species_parser):
     leaves = list(tree.leaves())
     taxonomy_queries = []
     for leaf in leaves:
         leaf_name = leaf.name
         if (not isinstance(leaf_name, str)) or (leaf_name.strip() == ""):
-            raise ValueError(f"Leaf name must be a non-empty string containing genus and species separated by '_': {leaf_name}")
+            raise ValueError(
+                "Leaf name must be a non-empty string containing genus and species "
+                f"separated by '_': {leaf_name}"
+            )
         try:
             parsed_species = parse_species_label(leaf_name, species_parser=species_parser)
         except ValueError as exc:
@@ -391,6 +414,10 @@ def taxonomic_annotation(tree, species_parser=None, parser=None):
         leaf.sci_name = parsed_species.scientific_name
         leaf.taxonomy_query = parsed_species.taxonomy_query
         taxonomy_queries.append(leaf.taxonomy_query)
+    return leaves, taxonomy_queries
+
+
+def _load_ncbi_taxa(taxonomy_queries):
     try:
         ncbi = ete4.NCBITaxa()
     except Exception as exc:
@@ -399,6 +426,10 @@ def taxonomic_annotation(tree, species_parser=None, parser=None):
         name2id = ncbi.get_name_translator(names=list(set(taxonomy_queries)))
     except Exception as exc:
         raise ValueError("Failed to query scientific names in NCBITaxa") from exc
+    return ncbi, name2id
+
+
+def _assign_taxids(leaves, name2id):
     for leaf in leaves:
         taxids = name2id.get(leaf.taxonomy_query, [])
         if len(taxids) == 0:
@@ -407,8 +438,20 @@ def taxonomic_annotation(tree, species_parser=None, parser=None):
             warnings.warn(
                 f"{leaf.taxonomy_query} has {len(taxids)} taxids; using the first entry.",
                 RuntimeWarning,
+                stacklevel=2,
             )
         leaf.taxid = taxids[0]
+
+
+def taxonomic_annotation(tree, species_parser=None, parser=None):
+    if parser is not None:
+        if species_parser is not None:
+            raise ValueError("Use only one of species_parser or parser")
+        species_parser = parser
+    tree = _load_tree_or_value_error(tree, parser=1, argument_name="tree")
+    leaves, taxonomy_queries = _parse_taxonomic_leaves(tree, species_parser)
+    ncbi, name2id = _load_ncbi_taxa(taxonomy_queries)
+    _assign_taxids(leaves, name2id)
     try:
         ncbi.annotate_tree(tree, taxid_attr="taxid")
     except Exception as exc:

@@ -20,35 +20,37 @@ def rgb_to_hex(r, g, b):
         if (channel < 0) or (channel > 1):
             raise ValueError("RGB channel values must be between 0 and 1")
         rgb[i] = int(np.round(channel * 255, decimals=0))
-    return '#%02X%02X%02X' % (rgb[0], rgb[1], rgb[2])
+    return f'#{rgb[0]:02X}{rgb[1]:02X}{rgb[2]:02X}'
+
+
+def _validate_rgb_color(color_values, color_name):
+    try:
+        raw_color_arr = np.asarray(color_values, dtype=object).reshape(-1)
+    except Exception as exc:
+        raise ValueError(f"{color_name} must contain exactly 3 channel values") from exc
+    if any(isinstance(channel_value, (bool, np.bool_)) for channel_value in raw_color_arr):
+        raise ValueError(f"{color_name} channel values must be numeric (bool is not allowed)")
+    try:
+        color_arr = np.asarray(color_values, dtype=float).reshape(-1)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{color_name} must contain exactly 3 channel values") from exc
+    if color_arr.shape[0] != 3:
+        raise ValueError(f"{color_name} must contain exactly 3 channel values")
+    if (not np.isfinite(color_arr).all()) or (np.any(color_arr < 0)) or (np.any(color_arr > 1)):
+        raise ValueError(f"{color_name} channel values must be finite numbers between 0 and 1")
+    return color_arr
 
 
 def get_rgb_gradient(ncol, col1, col2, colm=None):
     if isinstance(ncol, bool) or (not isinstance(ncol, (int, np.integer))):
         raise ValueError("ncol must be an integer")
-    if colm is None:
-        colm = [0.5, 0.5, 0.5]
     if ncol <= 0:
         return []
-    color_inputs = {"col1": col1, "col2": col2, "colm": colm}
-    for color_name, color_values in color_inputs.items():
-        try:
-            raw_color_arr = np.asarray(color_values, dtype=object).reshape(-1)
-        except Exception as exc:
-            raise ValueError(f"{color_name} must contain exactly 3 channel values") from exc
-        if any(isinstance(channel_value, (bool, np.bool_)) for channel_value in raw_color_arr):
-            raise ValueError(f"{color_name} channel values must be numeric (bool is not allowed)")
-        try:
-            color_arr = np.asarray(color_values, dtype=float).reshape(-1)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"{color_name} must contain exactly 3 channel values") from exc
-        if color_arr.shape[0] != 3:
-            raise ValueError(f"{color_name} must contain exactly 3 channel values")
-        if (not np.isfinite(color_arr).all()) or (np.any(color_arr < 0)) or (np.any(color_arr > 1)):
-            raise ValueError(f"{color_name} channel values must be finite numbers between 0 and 1")
-    col1 = np.asarray(col1, dtype=float)
-    col2 = np.asarray(col2, dtype=float)
-    colm = np.asarray(colm, dtype=float)
+    color_inputs = {"col1": col1, "col2": col2, "colm": [0.5, 0.5, 0.5] if colm is None else colm}
+    col1, col2, colm = (
+        _validate_rgb_color(color_values, color_name)
+        for color_name, color_values in color_inputs.items()
+    )
     if ncol == 1:
         return [col1.tolist()]
     t_values = np.linspace(0.0, 1.0, num=ncol, endpoint=True)

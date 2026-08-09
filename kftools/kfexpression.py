@@ -1,6 +1,13 @@
 import numpy as np
 
+
 def calc_complementarity(array1, array2):
+    """Return the mean relative difference between two non-negative profiles.
+
+    The two profiles must have identical, non-zero lengths.  Requiring matching
+    shapes keeps the result symmetric and prevents silent truncation by ``zip``-
+    style semantics.
+    """
     try:
         arr1 = np.asarray(array1, dtype=float).reshape(-1)
         arr2 = np.asarray(array2, dtype=float).reshape(-1)
@@ -8,30 +15,23 @@ def calc_complementarity(array1, array2):
         raise ValueError("array1 and array2 must contain numeric values") from exc
     if (not np.isfinite(arr1).all()) or (not np.isfinite(arr2).all()):
         raise ValueError("array1 and array2 must contain only finite numeric values")
-    denom = arr1.size
-    if denom == 0:
-        raise ValueError("array1 must contain at least one value")
-    n = min(arr1.size, arr2.size)
-    if n == 0:
-        return 0.0
-    arr1 = arr1[:n]
-    arr2 = arr2[:n]
+    if arr1.size == 0 or arr2.size == 0:
+        raise ValueError("array1 and array2 must each contain at least one value")
+    if arr1.size != arr2.size:
+        raise ValueError("array1 and array2 must contain the same number of values")
+    if np.any(arr1 < 0) or np.any(arr2 < 0):
+        raise ValueError("array1 and array2 must contain non-negative values")
     max_values = np.maximum(arr1, arr2)
     abs_diff = np.abs(arr1 - arr2)
     with np.errstate(divide='ignore', invalid='ignore'):
         rel_diff = np.divide(abs_diff, max_values, out=np.zeros_like(abs_diff), where=(max_values != 0))
-    normalized_dif = rel_diff.sum() / denom
+    normalized_dif = rel_diff.mean()
     return float(normalized_dif)
 
 
-def calc_tau(df, columns, unlog2=True, unPlus1=True):
+def _validate_tau_columns(df, columns):
     if not hasattr(df, "columns"):
         raise ValueError("df must be a pandas DataFrame-like object with columns")
-    for flag_name, flag_value in [("unlog2", unlog2), ("unPlus1", unPlus1)]:
-        if not isinstance(flag_value, (bool, np.bool_)):
-            raise ValueError(f"{flag_name} must be a boolean value")
-    unlog2 = bool(unlog2)
-    unPlus1 = bool(unPlus1)
     if columns is None:
         raise ValueError("columns must contain at least one column name")
     if isinstance(columns, str):
@@ -51,6 +51,10 @@ def calc_tau(df, columns, unlog2=True, unPlus1=True):
     missing_columns = [col for col in columns if col not in df.columns]
     if len(missing_columns) > 0:
         raise ValueError(f"columns not found in dataframe: {missing_columns}")
+    return columns
+
+
+def _prepare_tau_matrix(df, columns, unlog2, unPlus1):
     try:
         x = df.loc[:, columns].to_numpy(dtype=float)
     except Exception as exc:
@@ -67,6 +71,25 @@ def calc_tau(df, columns, unlog2=True, unPlus1=True):
         x = np.clip(x, a_min=0, a_max=None)
     else:
         x = np.asarray(x, dtype=float)
+    if np.any(x < 0):
+        raise ValueError("columns must contain non-negative expression values")
+    return x
+
+
+def calc_tau(df, columns, unlog2=True, unPlus1=True):
+    """Calculate the standard tissue-specificity tau index for each row.
+
+    Tau is ``sum(1 - x_i / max(x)) / (n - 1)`` for two or more tissues.
+    A single-tissue profile and an all-zero profile are defined as ``0`` because
+    tissue specificity cannot be inferred in those cases.
+    """
+    for flag_name, flag_value in [("unlog2", unlog2), ("unPlus1", unPlus1)]:
+        if not isinstance(flag_value, (bool, np.bool_)):
+            raise ValueError(f"{flag_name} must be a boolean value")
+    columns = _validate_tau_columns(df, columns)
+    x = _prepare_tau_matrix(df, columns, bool(unlog2), bool(unPlus1))
+    if x.shape[1] == 1:
+        return np.zeros(x.shape[0], dtype=float)
     xmax = x.max(axis=1).reshape(x.shape[0], 1)
     with np.errstate(divide='ignore', invalid='ignore'):
         ratio = np.divide(
@@ -77,5 +100,5 @@ def calc_tau(df, columns, unlog2=True, unPlus1=True):
         )
     xadj = 1 - ratio
     xadj = np.nan_to_num(xadj)
-    taus = xadj.sum(axis=1) / x.shape[1]
+    taus = xadj.sum(axis=1) / (x.shape[1] - 1)
     return taus

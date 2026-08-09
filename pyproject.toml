@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["kftools"]
+
+[tool.coverage.report]
+fail_under = 85
+show_missing = true
+skip_covered = true
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["B", "C4", "C90", "E4", "E7", "E9", "F", "PERF", "SIM", "UP"]
+
+[tool.ruff.lint.mccabe]
+# Validation-heavy plotting functions form the current baseline. CI prevents
+# further growth while they are progressively decomposed.
+max-complexity = 10
+
+[tool.mypy]
+python_version = "3.10"
+check_untyped_defs = true
+ignore_missing_imports = true
+show_error_codes = true

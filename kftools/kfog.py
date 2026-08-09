@@ -12,9 +12,14 @@ try:
     from .kfphylo import add_numerical_node_labels, check_ultrametric, load_phylo_tree, taxonomic_annotation
     from .kfspecies import parse_species_label
 except ImportError:
-    from kfexpression import calc_complementarity, calc_tau
-    from kfphylo import add_numerical_node_labels, check_ultrametric, load_phylo_tree, taxonomic_annotation
-    from kfspecies import parse_species_label
+    from kfexpression import calc_complementarity, calc_tau  # type: ignore[no-redef]
+    from kfphylo import (  # type: ignore[no-redef]
+        add_numerical_node_labels,
+        check_ultrametric,
+        load_phylo_tree,
+        taxonomic_annotation,
+    )
+    from kfspecies import parse_species_label  # type: ignore[no-redef]
 
 NOTUNG_OPT_ROOT_RE = re.compile(
     r"Number of optimal roots:\s*([0-9][0-9,]*)\s*out of\s*([0-9][0-9,]*)",
@@ -49,13 +54,19 @@ def _validate_boolean_flag(flag_value, argument_name):
     return bool(flag_value)
 
 
+def _is_hashable(value):
+    try:
+        hash(value)
+    except TypeError:
+        return False
+    return True
+
+
 def _validate_hashable_series_values(series, argument_name):
     non_missing_values = series.dropna().to_list()
     unhashable_examples = []
     for value in non_missing_values:
-        try:
-            hash(value)
-        except TypeError:
+        if not _is_hashable(value):
             unhashable_examples.append(str(value))
             if len(unhashable_examples) >= 5:
                 break
@@ -69,6 +80,25 @@ def _validate_non_missing_series_values(series, argument_name):
     missing_mask = series.isna()
     if missing_mask.any():
         raise ValueError(f"{argument_name} must not contain missing values")
+
+
+def _is_missing_scalar(value):
+    """Return whether a scalar is missing without triggering pd.NA truthiness."""
+    missing = pd.isna(value)
+    return isinstance(missing, (bool, np.bool_)) and bool(missing)
+
+
+def _scalar_values_equal(left, right):
+    """Compare scalar values while treating two missing values as equal."""
+    left_missing = _is_missing_scalar(left)
+    right_missing = _is_missing_scalar(right)
+    if left_missing or right_missing:
+        return left_missing and right_missing
+    try:
+        comparison = left == right
+    except (TypeError, ValueError):
+        return False
+    return isinstance(comparison, (bool, np.bool_)) and bool(comparison)
 
 
 def _coerce_path_argument(path_value, argument_name='file'):
@@ -96,24 +126,7 @@ def _parse_int_suffix(line, prefix):
         return None
 
 
-def _parse_float_locale(value):
-    text = str(value).strip().replace(' ', '')
-    if text == '':
-        raise ValueError("empty float token")
-    try:
-        return float(text)
-    except ValueError:
-        pass
-
-    exponent_part = ''
-    mantissa = text
-    if ('e' in text) or ('E' in text):
-        split_match = re.match(r"^(.*?)([eE][-+]?[0-9]+)$", text)
-        if split_match is None:
-            raise ValueError(f"invalid float token: {value}")
-        mantissa = split_match.group(1)
-        exponent_part = split_match.group(2)
-
+def _normalize_locale_mantissa(mantissa):
     if (',' in mantissa) and ('.' in mantissa):
         if mantissa.rfind('.') > mantissa.rfind(','):
             # 1,234.56 -> dot decimal, comma thousands
@@ -142,61 +155,57 @@ def _parse_float_locale(value):
         ):
             # 1.234.567 -> dot thousands (multi-separator form)
             mantissa = ''.join(dot_parts)
+    return mantissa
+
+
+def _parse_float_locale(value):
+    text = str(value).strip().replace(' ', '')
+    if text == '':
+        raise ValueError("empty float token")
+    try:
+        return float(text)
+    except ValueError:
+        pass
+    split_match = re.match(r"^(.*?)([eE][-+]?[0-9]+)$", text)
+    has_exponent_marker = ('e' in text) or ('E' in text)
+    if has_exponent_marker and split_match is None:
+        raise ValueError(f"invalid float token: {value}")
+    mantissa = split_match.group(1) if split_match is not None else text
+    exponent_part = split_match.group(2) if split_match is not None else ''
+    mantissa = _normalize_locale_mantissa(mantissa)
 
     return float(mantissa + exponent_part)
 
 
-def nwk2table(tree, attr='', age=False, parent=False, sister=False):
-    age = _validate_boolean_flag(age, "age")
-    parent = _validate_boolean_flag(parent, "parent")
-    sister = _validate_boolean_flag(sister, "sister")
-    if not isinstance(attr, str):
-        raise ValueError("attr must be a string")
-    if age and (attr != 'dist'):
-        raise ValueError("age=True is supported only when attr='dist'")
-    tree_format = 0 if attr == 'support' else 1
-    if not hasattr(tree, "traverse"):
-        try:
-            tree = load_phylo_tree(tree, parser=tree_format)
-        except TypeError as exc:
-            raise ValueError("tree must be a Newick string, path, or tree object") from exc
-    tree = add_numerical_node_labels(tree)
-    nodes = list(tree.traverse())
-    n_nodes = len(nodes)
-    age_values = np.empty(n_nodes, dtype=float) if ((attr == 'dist') and age) else None
-    if age_values is not None:
-        if not check_ultrametric(tree):
-            raise ValueError("Tree must be ultrametric when age=True and attr='dist'")
-        for node in tree.traverse(strategy="postorder"):
-            label = node.branch_id
-            if node.is_leaf:
-                age_values[label] = 0.0
-            else:
-                first_child = node.children[0]
-                age_values[label] = age_values[first_child.branch_id] + first_child.dist
+def _nwk_age_values(tree, n_nodes):
+    if not check_ultrametric(tree):
+        raise ValueError("Tree must be ultrametric when age=True and attr='dist'")
+    age_values = np.empty(n_nodes, dtype=float)
+    for node in tree.traverse(strategy="postorder"):
+        if node.is_leaf:
+            age_values[node.branch_id] = 0.0
+        else:
+            first_child = node.children[0]
+            age_values[node.branch_id] = age_values[first_child.branch_id] + first_child.dist
+    return age_values
 
-    children = tree.children
-    has_typed_attr = (len(children) > 0) and hasattr(children[0], attr)
-    has_attr_for_all_nodes = all(hasattr(node, attr) for node in nodes)
+
+def _nwk_attr_values(nodes, attr):
+    n_nodes = len(nodes)
     attr_values_raw = [np.nan] * n_nodes
     for node in nodes:
-        label = node.branch_id
-        if has_attr_for_all_nodes:
-            attr_values_raw[label] = getattr(node, attr)
-        else:
-            attr_values_raw[label] = getattr(node, attr) if hasattr(node, attr) else np.nan
-    if has_typed_attr and has_attr_for_all_nodes:
-        sample_attr = getattr(children[0], attr)
-        if isinstance(sample_attr, (str, bytes, bytearray)):
-            # Preserve variable-length strings instead of truncating to fixed-width dtypes.
-            attr_values = np.asarray(attr_values_raw, dtype=object)
-        else:
-            try:
-                attr_values = np.asarray(attr_values_raw, dtype=type(sample_attr))
-            except (TypeError, ValueError, OverflowError):
-                attr_values = np.asarray(attr_values_raw, dtype=object)
-    else:
-        attr_values = np.asarray(attr_values_raw, dtype=object)
+        attr_values_raw[node.branch_id] = getattr(node, attr, np.nan)
+    # Let pandas infer a common dtype from all values.  Deriving the dtype from
+    # one node can silently truncate mixed numeric attributes (e.g. 1.5 -> 1).
+    return (
+        np.asarray(attr_values_raw, dtype=object)
+        if any(value is None for value in attr_values_raw)
+        else attr_values_raw
+    )
+
+
+def _nwk_relation_values(nodes, parent, sister):
+    n_nodes = len(nodes)
     parent_values = np.full(n_nodes, -1, dtype=np.int64) if parent else None
     sister_values = np.full(n_nodes, -1, dtype=np.int64) if sister else None
 
@@ -213,8 +222,30 @@ def nwk2table(tree, attr='', age=False, parent=False, sister=False):
                 sister_nodes = node.get_sisters()
                 if len(sister_nodes) > 0:
                     sister_values[label] = sister_nodes[0].branch_id
+    return parent_values, sister_values
 
-    data = {'branch_id': np.arange(n_nodes, dtype=np.int64)}
+
+def nwk2table(tree, attr='', age=False, parent=False, sister=False):
+    age = _validate_boolean_flag(age, "age")
+    parent = _validate_boolean_flag(parent, "parent")
+    sister = _validate_boolean_flag(sister, "sister")
+    if not isinstance(attr, str):
+        raise ValueError("attr must be a string")
+    if age and (attr != 'dist'):
+        raise ValueError("age=True is supported only when attr='dist'")
+    if not hasattr(tree, "traverse"):
+        try:
+            tree = load_phylo_tree(tree, parser=0 if attr == 'support' else 1)
+        except TypeError as exc:
+            raise ValueError("tree must be a Newick string, path, or tree object") from exc
+    tree = add_numerical_node_labels(tree)
+    nodes = list(tree.traverse())
+    n_nodes = len(nodes)
+    age_values = _nwk_age_values(tree, n_nodes) if age else None
+    attr_values = _nwk_attr_values(nodes, attr)
+    parent_values, sister_values = _nwk_relation_values(nodes, parent, sister)
+
+    data: dict[str, object] = {'branch_id': np.arange(n_nodes, dtype=np.int64)}
     data[attr] = attr_values
     if age_values is not None:
         data['age'] = age_values
@@ -225,137 +256,127 @@ def nwk2table(tree, attr='', age=False, parent=False, sister=False):
     df = pd.DataFrame(data)
     return df
 
-def node_gene2species(gene_tree, species_tree, is_ultrametric=False, species_parser=None, parser=None):
-    is_ultrametric = _validate_boolean_flag(is_ultrametric, "is_ultrametric")
+def _resolve_species_parser_alias(species_parser, parser):
     if parser is not None:
         if species_parser is not None:
             raise ValueError("Use only one of species_parser or parser")
-        species_parser = parser
-    if not hasattr(gene_tree, "traverse"):
-        try:
-            gene_tree = load_phylo_tree(gene_tree, parser=1)
-        except TypeError as exc:
-            raise ValueError("gene_tree must be a Newick string, path, or tree object") from exc
-    if not hasattr(species_tree, "traverse"):
-        try:
-            species_tree = load_phylo_tree(species_tree, parser=1)
-        except TypeError as exc:
-            raise ValueError("species_tree must be a Newick string, path, or tree object") from exc
-    species_leaf_names = list(species_tree.leaf_names())
-    invalid_species_leaf_names = [
-        species_leaf_name
-        for species_leaf_name in species_leaf_names
-        if (not isinstance(species_leaf_name, str)) or (species_leaf_name.strip() == "")
-    ]
-    if len(invalid_species_leaf_names) > 0:
+        return parser
+    return species_parser
+
+
+def _load_og_tree(tree, argument_name):
+    if hasattr(tree, 'traverse'):
+        return tree
+    try:
+        return load_phylo_tree(tree, parser=1)
+    except TypeError as exc:
         raise ValueError(
-            "species_tree leaf names must be non-empty strings for node_gene2species"
-        )
-    species_label_by_leaf = {}
-    species_name_counts = {}
-    for species_leaf in species_tree.leaves():
+            f"{argument_name} must be a Newick string, path, or tree object"
+        ) from exc
+
+
+def _species_tree_labels(species_tree, species_parser):
+    invalid_names = [
+        name for name in species_tree.leaf_names()
+        if (not isinstance(name, str)) or (name.strip() == '')
+    ]
+    if invalid_names:
+        raise ValueError("species_tree leaf names must be non-empty strings for node_gene2species")
+    label_by_leaf = {}
+    name_counts: dict[str, int] = {}
+    for leaf in species_tree.leaves():
         try:
-            parsed_species = parse_species_label(species_leaf.name, species_parser=species_parser)
+            label = parse_species_label(leaf.name, species_parser=species_parser).species_label
         except ValueError as exc:
             raise ValueError(
-                f"species_tree leaf name must contain species information with '_': {species_leaf.name}"
+                f"species_tree leaf name must contain species information with '_': {leaf.name}"
             ) from exc
-        species_label = parsed_species.species_label
-        species_label_by_leaf[species_leaf] = species_label
-        species_name_counts[species_label] = species_name_counts.get(species_label, 0) + 1
-    duplicate_species_names = sorted(
-        [species_leaf_name for species_leaf_name, species_count in species_name_counts.items() if species_count > 1]
-    )
-    if len(duplicate_species_names) > 0:
+        label_by_leaf[leaf] = label
+        name_counts[label] = name_counts.get(label, 0) + 1
+    duplicates = sorted(name for name, count in name_counts.items() if count > 1)
+    if duplicates:
         raise ValueError(
             "species_tree leaf names must be unique for node_gene2species; "
-            f"duplicates: {duplicate_species_names}"
+            f"duplicates: {duplicates}"
         )
-    gene_tree2 = copy.deepcopy(gene_tree)
-    gene_tree2 = add_numerical_node_labels(gene_tree2)
-    if is_ultrametric and (not check_ultrametric(gene_tree2)):
+    return label_by_leaf, name_counts
+
+
+def _validate_gene_species_ultrametric(gene_tree, species_tree, is_ultrametric):
+    if not is_ultrametric:
+        return
+    if not check_ultrametric(gene_tree):
         raise ValueError("gene_tree must be ultrametric when is_ultrametric=True")
-    if is_ultrametric:
-        try:
-            species_is_ultrametric = check_ultrametric(species_tree)
-        except ValueError as exc:
-            raise ValueError(
-                "species_tree must be ultrametric with finite non-negative branch lengths "
-                "when is_ultrametric=True"
-            ) from exc
-        if not species_is_ultrametric:
-            raise ValueError("species_tree must be ultrametric when is_ultrametric=True")
-    for leaf in gene_tree2.leaves():
-        try:
-            parsed_species = parse_species_label(leaf.name, species_parser=species_parser)
-        except ValueError as exc:
-            raise ValueError(
-                f"Gene leaf name must contain species information with '_': {leaf.name}"
-            ) from exc
-        leaf.name = parsed_species.species_label
-    tip_set_diff = set(gene_tree2.leaf_names()) - set(species_name_counts.keys())
-    if tip_set_diff:
-        sys.stderr.write(f"Warning. A total of {len(tip_set_diff)} species are missing in the species tree: {str(tip_set_diff)}\n")
-    if is_ultrametric:
-        cn = ["branch_id", "spnode_coverage", 'spnode_age']
-    else:
-        cn = ["branch_id", "spnode_coverage"]
+    try:
+        species_is_ultrametric = check_ultrametric(species_tree)
+    except ValueError as exc:
+        raise ValueError(
+            "species_tree must be ultrametric with finite non-negative branch lengths "
+            "when is_ultrametric=True"
+        ) from exc
+    if not species_is_ultrametric:
+        raise ValueError("species_tree must be ultrametric when is_ultrametric=True")
+
+
+def _gene_species_label(leaf_name, species_parser):
+    try:
+        return parse_species_label(
+            leaf_name, species_parser=species_parser
+        ).species_label
+    except ValueError as exc:
+        raise ValueError(
+            f"Gene leaf name must contain species information with '_': {leaf_name}"
+        ) from exc
+
+
+def _rename_gene_leaves(gene_tree, species_parser):
+    for leaf in gene_tree.leaves():
+        leaf.name = _gene_species_label(leaf.name, species_parser)
+
+
+def _species_tree_context(species_tree, label_by_leaf, is_ultrametric):
     species_nodes = list(species_tree.traverse(strategy="postorder"))
-    species_names = {}
-    for sn in species_nodes:
-        if sn.is_leaf:
-            species_names[sn] = species_label_by_leaf[sn].replace('\'', '')
-        else:
-            species_names[sn] = (sn.name or '').replace('\'', '')
-    species_leaf_node = {species_label_by_leaf[leaf]: leaf for leaf in species_tree.leaves()}
-    species_depth = {}
-    for sn in species_tree.traverse(strategy="preorder"):
-        species_depth[sn] = 0 if sn.is_root else (species_depth[sn.up] + 1)
+    names = {
+        node: (label_by_leaf[node] if node.is_leaf else (node.name or '')).replace("'", '')
+        for node in species_nodes
+    }
+    leaf_node = {label_by_leaf[leaf]: leaf for leaf in species_tree.leaves()}
+    species_depth: dict[object, int] = {}
+    for node in species_tree.traverse(strategy='preorder'):
+        species_depth[node] = 0 if node.is_root else species_depth[node.up] + 1
+    age: dict[object, float] = {}
+    up_age: dict[object, float] = {}
     if is_ultrametric:
-        species_age = {}
-        for sn in species_nodes:
-            if sn.is_leaf:
-                species_age[sn] = 0.0
-            else:
-                first_child = sn.children[0]
-                species_age[sn] = species_age[first_child] + first_child.dist
-        species_up_age = {}
-        for sn in species_nodes:
-            if sn.is_root:
-                species_up_age[sn] = np.inf
-            else:
-                species_up_age[sn] = species_age[sn.up]
+        for node in species_nodes:
+            age[node] = 0.0 if node.is_leaf else age[node.children[0]] + node.children[0].dist
+        up_age = {node: np.inf if node.is_root else age[node.up] for node in species_nodes}
+    return names, leaf_node, species_depth, age, up_age
 
-    lca_cache = {}
 
-    def pair_lca(node_a, node_b):
-        if node_a is node_b:
-            return node_a
-        key = (node_a, node_b) if id(node_a) <= id(node_b) else (node_b, node_a)
-        cached = lca_cache.get(key)
-        if cached is not None:
-            return cached
-        a = node_a
-        b = node_b
-        depth_a = species_depth[a]
-        depth_b = species_depth[b]
-        while depth_a > depth_b:
-            a = a.up
-            depth_a -= 1
-        while depth_b > depth_a:
-            b = b.up
-            depth_b -= 1
-        while a is not b:
-            a = a.up
-            b = b.up
-        lca_cache[key] = a
-        return a
+def _pair_lca(node_a, node_b, depth, cache):
+    if node_a is node_b:
+        return node_a
+    key = (node_a, node_b) if id(node_a) <= id(node_b) else (node_b, node_a)
+    if key in cache:
+        return cache[key]
+    a, b = node_a, node_b
+    depth_a, depth_b = depth[a], depth[b]
+    while depth_a > depth_b:
+        a, depth_a = a.up, depth_a - 1
+    while depth_b > depth_a:
+        b, depth_b = b.up, depth_b - 1
+    while a is not b:
+        a, b = a.up, b.up
+    cache[key] = a
+    return a
 
-    gene_nodes = list(gene_tree2.traverse(strategy="postorder"))
+
+def _gene_coverage_context(gene_tree, species_leaf_node, species_depth, is_ultrametric):
+    gene_nodes = list(gene_tree.traverse(strategy="postorder"))
     gene_coverage = {}
     gene_has_missing_species = {}
-    if is_ultrametric:
-        gene_age = {}
+    gene_age = {}
+    lca_cache: dict[tuple[object, object], object] = {}
     for gn in gene_nodes:
         if gn.is_leaf:
             covered_species_node = species_leaf_node.get(gn.name)
@@ -377,12 +398,27 @@ def node_gene2species(gene_tree, species_tree, is_ultrametric=False, species_par
 
         covered_species_node = gene_coverage[children[0]]
         for child in children[1:]:
-            covered_species_node = pair_lca(covered_species_node, gene_coverage[child])
+            covered_species_node = _pair_lca(
+                covered_species_node, gene_coverage[child], species_depth, lca_cache
+            )
         gene_coverage[gn] = covered_species_node
+    return gene_nodes, gene_coverage, gene_age
 
+
+def _species_node_at_age(coverage_node, gene_node_age, species_age, species_up_age):
+    current = coverage_node
+    while current is not None:
+        if species_age[current] <= gene_node_age < species_up_age[current]:
+            return current
+        current = current.up
+    return None
+
+
+def _gene_species_rows(context, is_ultrametric):
+    gene_nodes, coverage, gene_age, species_names, species_age, species_up_age = context
     rows = []
     for gn in gene_nodes:
-        coverage_node = gene_coverage[gn]
+        coverage_node = coverage[gn]
         row = {
             "branch_id": gn.branch_id,
             "spnode_coverage": "" if coverage_node is None else species_names[coverage_node],
@@ -390,15 +426,225 @@ def node_gene2species(gene_tree, species_tree, is_ultrametric=False, species_par
         if is_ultrametric:
             row["spnode_age"] = ""
             if coverage_node is not None:
-                gn_age = gene_age[gn]
-                current_species_node = coverage_node
-                while current_species_node is not None:
-                    if (gn_age >= species_age[current_species_node]) and (gn_age < species_up_age[current_species_node]):
-                        row["spnode_age"] = species_names[current_species_node]
-                        break
-                    current_species_node = current_species_node.up
+                age_node = _species_node_at_age(
+                    coverage_node, gene_age[gn], species_age, species_up_age
+                )
+                if age_node is not None:
+                    row['spnode_age'] = species_names[age_node]
         rows.append(row)
-    return pd.DataFrame(rows, columns=cn)
+    return rows
+
+
+def node_gene2species(gene_tree, species_tree, is_ultrametric=False, species_parser=None, parser=None):
+    is_ultrametric = _validate_boolean_flag(is_ultrametric, "is_ultrametric")
+    species_parser = _resolve_species_parser_alias(species_parser, parser)
+    gene_tree = _load_og_tree(gene_tree, 'gene_tree')
+    species_tree = _load_og_tree(species_tree, 'species_tree')
+    label_by_leaf, species_counts = _species_tree_labels(species_tree, species_parser)
+    gene_tree = add_numerical_node_labels(copy.deepcopy(gene_tree))
+    _validate_gene_species_ultrametric(gene_tree, species_tree, is_ultrametric)
+    _rename_gene_leaves(gene_tree, species_parser)
+    missing_species = set(gene_tree.leaf_names()) - set(species_counts)
+    if missing_species:
+        sys.stderr.write(
+            f"Warning. A total of {len(missing_species)} species are missing in the "
+            f"species tree: {missing_species}\n"
+        )
+    species_names, leaf_node, depth, species_age, species_up_age = _species_tree_context(
+        species_tree, label_by_leaf, is_ultrametric
+    )
+    gene_nodes, coverage, gene_age = _gene_coverage_context(
+        gene_tree, leaf_node, depth, is_ultrametric
+    )
+    rows = _gene_species_rows(
+        (gene_nodes, coverage, gene_age, species_names, species_age, species_up_age),
+        is_ultrametric,
+    )
+    columns = (
+        ["branch_id", "spnode_coverage", 'spnode_age']
+        if is_ultrametric
+        else ["branch_id", "spnode_coverage"]
+    )
+    return pd.DataFrame(rows, columns=columns)
+
+def _read_tsv(file, argument_name):
+    try:
+        return pd.read_csv(file, sep='\t')
+    except (OSError, UnicodeDecodeError, pd.errors.ParserError, pd.errors.EmptyDataError) as exc:
+        raise ValueError(
+            f"Failed to read {argument_name} as UTF-8 tab-separated text: {file}"
+        ) from exc
+
+
+def _invalid_column_values(df, mask, column):
+    return sorted(set(df.loc[mask, column].astype(str)))
+
+
+def _validated_regime_series(df, df_name):
+    numeric = pd.to_numeric(df['regime'], errors='coerce')
+    validations = [
+        (df['regime'].notna() & numeric.isna(), "must be numeric or NaN"),
+        (numeric.notna() & (~np.isfinite(numeric.to_numpy(dtype=float, copy=False))),
+         "must contain finite numeric values"),
+        (numeric.notna() & (numeric != np.floor(numeric)), "must contain integer IDs"),
+        (numeric.notna() & (numeric < 0), "must contain non-negative IDs"),
+        (numeric.notna() & (numeric > INT64_MAX), f"must be <= {INT64_MAX} to avoid integer overflow"),
+    ]
+    for invalid_mask, message in validations:
+        if invalid_mask.any():
+            invalid_values = _invalid_column_values(df, invalid_mask, 'regime')
+            prefix = f"{df_name} " if df_name else ""
+            raise ValueError(f"{prefix}regime column {message}; invalid values: {invalid_values}")
+    return numeric
+
+
+def _validated_trait_columns(df_leaf, required_columns):
+    trait_columns = [column for column in df_leaf.columns if column not in required_columns]
+    if not trait_columns:
+        raise ValueError("leaf_file must include at least one trait column after node_name/param/regime")
+    for trait_column in trait_columns:
+        numeric = pd.to_numeric(df_leaf[trait_column], errors='coerce')
+        invalid = df_leaf[trait_column].notna() & numeric.isna()
+        if invalid.any():
+            invalid_values = _invalid_column_values(df_leaf, invalid, trait_column)
+            raise ValueError(
+                f"leaf_file trait column '{trait_column}' must be numeric or NaN; "
+                f"invalid values: {invalid_values}"
+            )
+        df_leaf[trait_column] = numeric
+    return trait_columns
+
+
+def _validated_ou_tables(df_regime, df_leaf):
+    missing_regime = sorted({'node_name', 'regime'} - set(df_regime.columns))
+    if missing_regime:
+        raise ValueError(f"regime_file requires columns: {missing_regime}")
+    required_leaf = {'node_name', 'param', 'regime'}
+    missing_leaf = sorted(required_leaf - set(df_leaf.columns))
+    if missing_leaf:
+        raise ValueError(f"leaf_file requires columns: {missing_leaf}")
+    df_regime, df_leaf = df_regime.copy(), df_leaf.copy()
+    df_regime['regime'] = _validated_regime_series(df_regime, 'regime_file')
+    df_leaf['regime'] = _validated_regime_series(df_leaf, 'leaf_file')
+    traits = _validated_trait_columns(df_leaf, required_leaf)
+    return df_regime, df_leaf, traits
+
+
+def _ou_regime_map(nodes, df_regime):
+    rows = df_regime.loc[df_regime['regime'].notna(), ['node_name', 'regime']].copy()
+    invalid = rows['node_name'].map(
+        lambda name: (not isinstance(name, str)) or (name.strip() == '')
+    )
+    if invalid.any():
+        values = _invalid_column_values(rows, invalid, 'node_name')
+        raise ValueError(
+            "regime_file node_name column must contain non-empty string values when regime is provided; "
+            f"invalid values: {values}"
+        )
+    conflicts = rows.groupby('node_name')['regime'].nunique(dropna=True)
+    conflicting_names = sorted(conflicts.index[conflicts > 1].tolist())
+    if conflicting_names:
+        raise ValueError(
+            "regime_file contains conflicting regime IDs for node_name values: "
+            f"{conflicting_names}"
+        )
+    named_nodes = [node.name for node in nodes if isinstance(node.name, str) and node.name.strip()]
+    name_counts = pd.Series(named_nodes, dtype=object).value_counts()
+    duplicate_names = sorted(name_counts.index[name_counts > 1].tolist())
+    if duplicate_names:
+        raise ValueError(
+            "input_tree_file contains duplicate non-empty node names that make regime mapping ambiguous: "
+            f"{duplicate_names}"
+        )
+    unknown_names = sorted(set(rows['node_name']) - set(named_nodes))
+    if unknown_names:
+        raise ValueError(
+            "regime_file contains node_name values not present in input_tree_file: "
+            f"{unknown_names}"
+        )
+    return {name: int(regime) for name, regime in rows.itertuples(index=False, name=None)}
+
+
+def _assign_ou_regimes(tree, regime_map):
+    for node in tree.traverse(strategy='preorder'):
+        inherited = 0 if node.is_root else node.up.regime
+        node.regime = regime_map.get(node.name, inherited)
+
+
+def _ou_mu_by_regime(df_leaf, tissues, nodes):
+    if 'expectations' in df_leaf['param'].values:
+        df_leaf.loc[df_leaf['param'] == 'expectations', 'param'] = 'mu'
+    columns = [column for column in df_leaf.columns if column not in ['node_name', 'param']]
+    mu_table = (
+        df_leaf.loc[df_leaf['param'] == 'mu', columns]
+        .drop_duplicates()
+        .groupby('regime')
+        .mean()
+        .loc[:, tissues]
+    )
+    mu_by_regime = dict(zip(mu_table.index.to_numpy(), mu_table.to_numpy(), strict=True))
+    missing = sorted({node.regime for node in nodes} - set(mu_by_regime))
+    if missing:
+        raise ValueError(f"Missing mu values for regime IDs: {missing}")
+    return mu_by_regime
+
+
+def _ou_node_arrays(nodes, mu_by_regime, num_tissues):
+    num_nodes = len(nodes)
+    arrays = {
+        'branch_id': np.empty(num_nodes, dtype=np.int64),
+        'regime': np.empty(num_nodes, dtype=np.int64),
+        'is_shift': np.empty(num_nodes, dtype=np.int64),
+        'num_child_shift': np.full(num_nodes, np.nan, dtype=float),
+        'parent_labels': np.empty(num_nodes, dtype=np.int64),
+        'mu_values': np.empty((num_nodes, num_tissues), dtype=float),
+    }
+    shift_pairs = []
+    for row_index, node in enumerate(nodes):
+        shift = int((not node.is_root) and (node.regime != node.up.regime))
+        arrays['branch_id'][row_index] = node.branch_id
+        arrays['regime'][row_index] = node.regime
+        arrays['is_shift'][row_index] = shift
+        arrays['parent_labels'][row_index] = -1 if node.is_root else node.up.branch_id
+        arrays['mu_values'][row_index, :] = mu_by_regime[node.regime]
+        if not node.is_leaf:
+            arrays['num_child_shift'][row_index] = sum(
+                int(node.regime != child.regime) for child in node.children
+            )
+        sisters = node.get_sisters() if shift else []
+        if sisters:
+            shift_pairs.append((node.branch_id, sisters[0].branch_id))
+    return arrays, shift_pairs
+
+
+def _add_ou_tau_values(df, arrays, mu_columns):
+    tau_values = calc_tau(df, mu_columns, unlog2=True, unPlus1=True)
+    branch_id, parent_labels = arrays['branch_id'], arrays['parent_labels']
+    tau_by_label = np.empty(len(branch_id), dtype=float)
+    tau_by_label[branch_id] = tau_values
+    safe_parent = parent_labels.copy()
+    safe_parent[safe_parent == -1] = 0
+    delta_tau = tau_values - tau_by_label[safe_parent]
+    delta_tau[parent_labels == -1] = np.nan
+    df['tau'], df['delta_tau'] = tau_values, delta_tau
+
+
+def _add_ou_shift_values(df, arrays, shift_pairs):
+    branch_id, mu_values = arrays['branch_id'], arrays['mu_values']
+    label_to_idx = np.empty(len(branch_id), dtype=np.int64)
+    label_to_idx[branch_id] = np.arange(len(branch_id), dtype=np.int64)
+    delta_maxmu = np.full(len(branch_id), np.nan, dtype=float)
+    complementarity = np.full(len(branch_id), np.nan, dtype=float)
+    max_mu = mu_values.max(axis=1)
+    unlogged_mu = np.clip(np.exp2(mu_values) - 1, a_min=0, a_max=None)
+    for label, sister_label in shift_pairs:
+        index, sister_index = label_to_idx[label], label_to_idx[sister_label]
+        delta_maxmu[index] = float(max_mu[index] - max_mu[sister_index])
+        complementarity[index] = calc_complementarity(
+            unlogged_mu[index], unlogged_mu[sister_index]
+        )
+    df['delta_maxmu'], df['mu_complementarity'] = delta_maxmu, complementarity
+
 
 def ou2table(regime_file, leaf_file, input_tree_file):
     regime_file = _coerce_path_argument(regime_file, 'regime_file')
@@ -406,239 +652,65 @@ def ou2table(regime_file, leaf_file, input_tree_file):
     input_tree_file = _coerce_path_argument(input_tree_file, 'input_tree_file')
     if (not os.path.exists(input_tree_file)) or (not os.path.isfile(input_tree_file)):
         raise ValueError(f"input_tree_file must be an existing file path: {input_tree_file}")
-    try:
-        df_regime = pd.read_csv(regime_file, sep="\t")
-    except (OSError, UnicodeDecodeError, pd.errors.ParserError, pd.errors.EmptyDataError) as exc:
-        raise ValueError(f"Failed to read regime_file as UTF-8 tab-separated text: {regime_file}") from exc
-    try:
-        df_leaf = pd.read_csv(leaf_file, sep="\t")
-    except (OSError, UnicodeDecodeError, pd.errors.ParserError, pd.errors.EmptyDataError) as exc:
-        raise ValueError(f"Failed to read leaf_file as UTF-8 tab-separated text: {leaf_file}") from exc
-    required_regime_columns = {"node_name", "regime"}
-    missing_regime_columns = sorted(required_regime_columns - set(df_regime.columns))
-    if len(missing_regime_columns) > 0:
-        raise ValueError(f"regime_file requires columns: {missing_regime_columns}")
-    required_leaf_columns = ("node_name", "param", "regime")
-    required_leaf_columns_set = set(required_leaf_columns)
-    missing_leaf_columns = sorted(required_leaf_columns_set - set(df_leaf.columns))
-    if len(missing_leaf_columns) > 0:
-        raise ValueError(f"leaf_file requires columns: {missing_leaf_columns}")
-    if df_leaf.shape[1] <= 3:
-        raise ValueError("leaf_file must include at least one trait column after node_name/param/regime")
-    df_regime = df_regime.copy()
-    df_leaf = df_leaf.copy()
-    for df_name, df_obj in [("regime_file", df_regime), ("leaf_file", df_leaf)]:
-        regime_numeric = pd.to_numeric(df_obj["regime"], errors="coerce")
-        invalid_regime_mask = df_obj["regime"].notna() & regime_numeric.isna()
-        if invalid_regime_mask.any():
-            invalid_values = sorted(set(df_obj.loc[invalid_regime_mask, "regime"].astype(str)))
-            raise ValueError(f"{df_name} regime column must be numeric or NaN; invalid values: {invalid_values}")
-        non_finite_mask = regime_numeric.notna() & (~np.isfinite(regime_numeric.to_numpy(dtype=float, copy=False)))
-        if non_finite_mask.any():
-            invalid_values = sorted(set(df_obj.loc[non_finite_mask, "regime"].astype(str)))
-            raise ValueError(f"{df_name} regime column must contain finite numeric values; invalid values: {invalid_values}")
-        non_integer_mask = regime_numeric.notna() & (regime_numeric != np.floor(regime_numeric))
-        if non_integer_mask.any():
-            invalid_values = sorted(set(df_obj.loc[non_integer_mask, "regime"].astype(str)))
-            raise ValueError(f"{df_name} regime column must contain integer IDs; invalid values: {invalid_values}")
-        negative_mask = regime_numeric.notna() & (regime_numeric < 0)
-        if negative_mask.any():
-            invalid_values = sorted(set(df_obj.loc[negative_mask, "regime"].astype(str)))
-            raise ValueError(f"{df_name} regime column must contain non-negative IDs; invalid values: {invalid_values}")
-        too_large_mask = regime_numeric.notna() & (regime_numeric > INT64_MAX)
-        if too_large_mask.any():
-            invalid_values = sorted(set(df_obj.loc[too_large_mask, "regime"].astype(str)))
-            raise ValueError(
-                f"{df_name} regime column must be <= {INT64_MAX} to avoid integer overflow; "
-                f"invalid values: {invalid_values}"
-            )
-        df_obj["regime"] = regime_numeric
-    trait_columns = [column_name for column_name in df_leaf.columns if column_name not in required_leaf_columns_set]
-    if len(trait_columns) == 0:
-        raise ValueError("leaf_file must include at least one trait column after node_name/param/regime")
-    for trait_col in trait_columns:
-        trait_numeric = pd.to_numeric(df_leaf[trait_col], errors="coerce")
-        invalid_trait_mask = df_leaf[trait_col].notna() & trait_numeric.isna()
-        if invalid_trait_mask.any():
-            invalid_values = sorted(set(df_leaf.loc[invalid_trait_mask, trait_col].astype(str)))
-            raise ValueError(
-                f"leaf_file trait column '{trait_col}' must be numeric or NaN; invalid values: {invalid_values}"
-            )
-        df_leaf[trait_col] = trait_numeric
-    tree = load_phylo_tree(input_tree_file, parser=1)
-    tree = add_numerical_node_labels(tree)
+    df_regime = _read_tsv(regime_file, 'regime_file')
+    df_leaf = _read_tsv(leaf_file, 'leaf_file')
+    df_regime, df_leaf, tissues = _validated_ou_tables(df_regime, df_leaf)
+    tree = add_numerical_node_labels(load_phylo_tree(input_tree_file, parser=1))
     nodes = list(tree.traverse())
-    num_nodes = len(nodes)
-    tissues = trait_columns
-    if 'expectations' in df_leaf['param'].values:
-        df_leaf.loc[(df_leaf['param'] == 'expectations'), 'param'] = 'mu'
     cn1 = ["branch_id", "regime", "is_shift", "num_child_shift"]
     cn2 = ["tau", "delta_tau", "delta_maxmu", "mu_complementarity"]
     cn3 = ["mu_" + tissue for tissue in tissues]
     cn = cn1 + cn2 + cn3
-    regime_map = {}
-    regime_rows_non_nan = df_regime.loc[df_regime["regime"].notna(), ["node_name", "regime"]].copy()
-    invalid_node_name_mask = regime_rows_non_nan["node_name"].map(
-        lambda node_name: (not isinstance(node_name, str)) or (node_name.strip() == "")
-    )
-    if invalid_node_name_mask.any():
-        invalid_values = sorted(set(regime_rows_non_nan.loc[invalid_node_name_mask, "node_name"].astype(str)))
-        raise ValueError(
-            "regime_file node_name column must contain non-empty string values when regime is provided; "
-            f"invalid values: {invalid_values}"
-        )
-    if regime_rows_non_nan.shape[0] > 0:
-        regime_nunique = regime_rows_non_nan.groupby("node_name")["regime"].nunique(dropna=True)
-        conflicting_node_names = sorted(regime_nunique.index[regime_nunique > 1].tolist())
-        if len(conflicting_node_names) > 0:
-            raise ValueError(
-                "regime_file contains conflicting regime IDs for node_name values: "
-                f"{conflicting_node_names}"
-            )
-    named_node_names = [
-        node.name
-        for node in nodes
-        if isinstance(node.name, str) and (node.name.strip() != "")
-    ]
-    tree_node_name_counts = {}
-    for node_name in named_node_names:
-        tree_node_name_counts[node_name] = tree_node_name_counts.get(node_name, 0) + 1
-    duplicate_tree_node_names = sorted(
-        [node_name for node_name, count in tree_node_name_counts.items() if count > 1]
-    )
-    if len(duplicate_tree_node_names) > 0:
-        raise ValueError(
-            "input_tree_file contains duplicate non-empty node names that make regime mapping ambiguous: "
-            f"{duplicate_tree_node_names}"
-        )
-    known_node_names = set(named_node_names)
-    unknown_node_names = sorted(
-        {
-            node_name
-            for node_name in regime_rows_non_nan["node_name"].tolist()
-            if node_name not in known_node_names
-        }
-    )
-    if len(unknown_node_names) > 0:
-        raise ValueError(
-            "regime_file contains node_name values not present in input_tree_file: "
-            f"{unknown_node_names}"
-        )
-    for node_name, regime in regime_rows_non_nan.itertuples(index=False, name=None):
-        if node_name not in regime_map:
-            regime_map[node_name] = int(regime)
-    for node in tree.traverse(strategy="preorder"):
-        if node.is_root:
-            node.regime = regime_map.get(node.name, 0)
-        else:
-            node.regime = regime_map.get(node.name, node.up.regime)
-    is_mu = (df_leaf['param'] == 'mu')
-    is_cols = [c not in ['node_name', 'param'] for c in df_leaf.columns]
-    df_leaf_unique = df_leaf.loc[is_mu, df_leaf.columns[is_cols]]
-    df_leaf_unique = df_leaf_unique.drop_duplicates()
-    df_leaf_unique = df_leaf_unique.groupby(by='regime').mean()
-    mu_table = df_leaf_unique.loc[:, tissues]
-    mu_by_regime = {
-        regime: values
-        for regime, values in zip(mu_table.index.to_numpy(), mu_table.to_numpy())
-    }
-    observed_regimes = {node.regime for node in nodes}
-    missing_regimes = sorted(regime for regime in observed_regimes if regime not in mu_by_regime)
-    if missing_regimes:
-        raise ValueError(f"Missing mu values for regime IDs: {missing_regimes}")
-
-    branch_id = np.empty(num_nodes, dtype=np.int64)
-    regime = np.empty(num_nodes, dtype=np.int64)
-    is_shift = np.empty(num_nodes, dtype=np.int64)
-    num_child_shift = np.full(num_nodes, np.nan, dtype=float)
-    mu_values = np.empty((num_nodes, len(cn3)), dtype=float)
-    parent_labels = np.empty(num_nodes, dtype=np.int64)
-    shift_pairs = []
-    for row_idx, node in enumerate(nodes):
-        node_label = node.branch_id
-        shift_flag = int((not node.is_root) and (node.regime != node.up.regime))
-        branch_id[row_idx] = node_label
-        regime[row_idx] = node.regime
-        is_shift[row_idx] = shift_flag
-        mu_values[row_idx, :] = mu_by_regime[node.regime]
-        parent_labels[row_idx] = -1 if node.is_root else node.up.branch_id
-        if not node.is_leaf:
-            children = node.get_children()
-            num_child_shift[row_idx] = sum(int(node.regime != child.regime) for child in children)
-        if shift_flag:
-            sisters = node.get_sisters()
-            if len(sisters) > 0:
-                shift_pairs.append((node_label, sisters[0].branch_id))
-
+    _assign_ou_regimes(tree, _ou_regime_map(nodes, df_regime))
+    mu_by_regime = _ou_mu_by_regime(df_leaf, tissues, nodes)
+    arrays, shift_pairs = _ou_node_arrays(nodes, mu_by_regime, len(cn3))
     df = pd.DataFrame(
         {
-            "branch_id": branch_id,
-            "regime": regime,
-            "is_shift": is_shift,
-            "num_child_shift": num_child_shift,
+            column: arrays[column]
+            for column in ["branch_id", "regime", "is_shift", "num_child_shift"]
         }
     )
     for col_idx, col in enumerate(cn3):
-        df[col] = mu_values[:, col_idx]
-    tau_values = calc_tau(df, cn3, unlog2=True, unPlus1=True)
-    df["tau"] = tau_values
-    tau_by_label = np.empty(num_nodes, dtype=float)
-    tau_by_label[branch_id] = tau_values
-    parent_labels_safe = parent_labels.copy()
-    parent_labels_safe[parent_labels_safe == -1] = 0
-    delta_tau = tau_values - tau_by_label[parent_labels_safe]
-    delta_tau[parent_labels == -1] = np.nan
-    df["delta_tau"] = delta_tau
-
-    mu_max_values = mu_values.max(axis=1)
-    mu_unlog_values = np.clip(np.exp2(mu_values) - 1, a_min=0, a_max=None)
-    label_to_idx = np.empty(num_nodes, dtype=np.int64)
-    label_to_idx[branch_id] = np.arange(num_nodes, dtype=np.int64)
-    delta_maxmu = np.full(num_nodes, np.nan, dtype=float)
-    mu_complementarity = np.full(num_nodes, np.nan, dtype=float)
-    for my_label, sis_label in shift_pairs:
-        my_idx = label_to_idx[my_label]
-        sis_idx = label_to_idx[sis_label]
-        delta_maxmu[my_idx] = float(mu_max_values[my_idx] - mu_max_values[sis_idx])
-        mu_complementarity[my_idx] = calc_complementarity(mu_unlog_values[my_idx], mu_unlog_values[sis_idx])
-    df["delta_maxmu"] = delta_maxmu
-    df["mu_complementarity"] = mu_complementarity
+        df[col] = arrays['mu_values'][:, col_idx]
+    _add_ou_tau_values(df, arrays, cn3)
+    _add_ou_shift_values(df, arrays, shift_pairs)
     return df.loc[:, cn]
 
-def get_misc_node_statistics(tree_file, tax_annot=False, species_parser=None, parser=None):
-    tax_annot = _validate_boolean_flag(tax_annot, "tax_annot")
-    if parser is not None:
-        if species_parser is not None:
-            raise ValueError("Use only one of species_parser or parser")
-        species_parser = parser
-    try:
-        tree = load_phylo_tree(tree_file, parser=1)
-    except TypeError as exc:
-        raise ValueError("tree_file must be a Newick string, path, or tree object") from exc
-    tree = add_numerical_node_labels(tree)
-    cn1 = ["branch_id", "taxon", "taxid", "num_sp", "num_leaf", "so_event", "dup_conf_score"]
-    cn2 = ["parent", "sister", "child1", "child2", "so_event_parent"]
-    cn = cn1 + cn2
-    nodes = list(tree.traverse())
+def _annotate_misc_taxonomy(tree, nodes, tax_annot, species_parser):
     if tax_annot:
-        tree = taxonomic_annotation(tree, species_parser=species_parser)
-    else:
-        for node in nodes:
-            node.taxid = -999
-            if node.is_leaf:
-                try:
-                    node.sci_name = parse_species_label(
-                        node.name, species_parser=species_parser
-                    ).scientific_name
-                except ValueError:
-                    node.sci_name = node.name
-            else:
-                node.sci_name = ''
+        return taxonomic_annotation(tree, species_parser=species_parser)
+    for node in nodes:
+        node.taxid = -999
+        if not node.is_leaf:
+            node.sci_name = ''
+            continue
+        try:
+            node.sci_name = parse_species_label(
+                node.name, species_parser=species_parser
+            ).scientific_name
+        except ValueError:
+            node.sci_name = node.name
+    return tree
 
-    species_index = {}
-    species_mask_by_node = {}
-    num_leaf_by_node = {}
-    dup_conf_score_by_node = {}
+
+def _dup_confidence_score(children, species_masks):
+    if len(children) < 2:
+        return 0.0
+    seen_once = 0
+    seen_multiple = 0
+    for child in children:
+        child_mask = species_masks[child]
+        seen_multiple |= seen_once & child_mask
+        seen_once |= child_mask
+    union_count = seen_once.bit_count()
+    return 0.0 if union_count == 0 else seen_multiple.bit_count() / union_count
+
+
+def _misc_descendant_statistics(tree):
+    species_index: dict[str, int] = {}
+    species_mask_by_node: dict[object, int] = {}
+    num_leaf_by_node: dict[object, int] = {}
+    dup_conf_score_by_node: dict[object, float] = {}
     for node in tree.traverse(strategy="postorder"):
         if node.is_leaf:
             species_id = species_index.setdefault(node.sci_name, len(species_index))
@@ -648,87 +720,89 @@ def get_misc_node_statistics(tree_file, tax_annot=False, species_parser=None, pa
             continue
         children = node.children
         species_mask = 0
-        num_leaf = 0
+        descendant_leaf_count = 0
         for child in children:
             species_mask |= species_mask_by_node[child]
-            num_leaf += num_leaf_by_node[child]
+            descendant_leaf_count += num_leaf_by_node[child]
         species_mask_by_node[node] = species_mask
-        num_leaf_by_node[node] = num_leaf
-        if len(children) >= 2:
-            species_seen_once = 0
-            species_seen_multiple = 0
-            for child in children:
-                child_mask = species_mask_by_node[child]
-                species_seen_multiple |= (species_seen_once & child_mask)
-                species_seen_once |= child_mask
-            union_count = species_seen_once.bit_count()
-            if union_count == 0:
-                dup_conf_score_by_node[node] = 0.0
-            else:
-                dup_conf_score_by_node[node] = species_seen_multiple.bit_count() / union_count
-        else:
-            dup_conf_score_by_node[node] = 0.0
+        num_leaf_by_node[node] = descendant_leaf_count
+        dup_conf_score_by_node[node] = _dup_confidence_score(
+            children, species_mask_by_node
+        )
+    return species_mask_by_node, num_leaf_by_node, dup_conf_score_by_node
 
-    n_nodes = len(nodes)
-    branch_id = np.empty(n_nodes, dtype=np.int64)
-    taxon = np.empty(n_nodes, dtype=object)
-    taxid = np.empty(n_nodes, dtype=np.int64)
-    num_sp = np.empty(n_nodes, dtype=np.int64)
-    num_leaf = np.empty(n_nodes, dtype=np.int64)
-    so_event = np.full(n_nodes, "L", dtype=object)
-    dup_conf_score = np.zeros(n_nodes, dtype=float)
-    parent = np.full(n_nodes, -999, dtype=np.int64)
-    sister = np.full(n_nodes, -999, dtype=np.int64)
-    child1 = np.full(n_nodes, -999, dtype=np.int64)
-    child2 = np.full(n_nodes, -999, dtype=np.int64)
-    so_event_parent = np.full(n_nodes, "S", dtype=object)
 
+def _misc_output_arrays(n_nodes):
+    return {
+        'branch_id': np.empty(n_nodes, dtype=np.int64),
+        'taxon': np.empty(n_nodes, dtype=object),
+        'taxid': np.empty(n_nodes, dtype=np.int64),
+        'num_sp': np.empty(n_nodes, dtype=np.int64),
+        'num_leaf': np.empty(n_nodes, dtype=np.int64),
+        'so_event': np.full(n_nodes, 'L', dtype=object),
+        'dup_conf_score': np.zeros(n_nodes, dtype=float),
+        'parent': np.full(n_nodes, -999, dtype=np.int64),
+        'sister': np.full(n_nodes, -999, dtype=np.int64),
+        'child1': np.full(n_nodes, -999, dtype=np.int64),
+        'child2': np.full(n_nodes, -999, dtype=np.int64),
+        'so_event_parent': np.full(n_nodes, 'S', dtype=object),
+    }
+
+
+def _misc_sister_label(node):
+    if node.up is None:
+        return -999
+    siblings = node.up.children
+    if len(siblings) == 2:
+        return (siblings[1] if siblings[0] is node else siblings[0]).branch_id
+    sisters = node.get_sisters()
+    return sisters[0].branch_id if sisters else -999
+
+
+def _fill_misc_node_row(arrays, row_idx, node, statistics):
+    species_masks, leaf_counts, dup_scores = statistics
+    arrays['branch_id'][row_idx] = node.branch_id
+    arrays['taxon'][row_idx] = str(node.sci_name)
+    arrays['taxid'][row_idx] = node.taxid
+    arrays['num_sp'][row_idx] = species_masks[node].bit_count()
+    arrays['num_leaf'][row_idx] = leaf_counts[node]
+    arrays['parent'][row_idx] = -999 if node.up is None else node.up.branch_id
+    arrays['sister'][row_idx] = _misc_sister_label(node)
+    if node.is_leaf:
+        return
+    if node.children:
+        arrays['child1'][row_idx] = node.children[0].branch_id
+    if len(node.children) >= 2:
+        arrays['child2'][row_idx] = node.children[1].branch_id
+    score = dup_scores.get(node, 0.0)
+    arrays['dup_conf_score'][row_idx] = score
+    arrays['so_event'][row_idx] = 'D' if score > 0 else 'S'
+
+
+def _fill_misc_parent_events(arrays, nodes, dup_scores):
     for row_idx, node in enumerate(nodes):
-        label = node.branch_id
-        node_dup_conf_score = dup_conf_score_by_node.get(node, 0.0)
-        branch_id[row_idx] = label
-        taxon[row_idx] = str(node.sci_name)
-        taxid[row_idx] = node.taxid
-        num_sp[row_idx] = species_mask_by_node[node].bit_count()
-        num_leaf[row_idx] = num_leaf_by_node[node]
-        if hasattr(node.up, "branch_id"):
-            parent[row_idx] = node.up.branch_id
-        if node.up is not None:
-            siblings = node.up.children
-            if len(siblings) == 2:
-                sister_node = siblings[1] if siblings[0] is node else siblings[0]
-                sister[row_idx] = sister_node.branch_id
-            else:
-                sister_nodes = node.get_sisters()
-                if len(sister_nodes) > 0:
-                    sister[row_idx] = sister_nodes[0].branch_id
-        if not node.is_leaf:
-            if len(node.children) >= 1:
-                child1[row_idx] = node.children[0].branch_id
-            if len(node.children) >= 2:
-                child2[row_idx] = node.children[1].branch_id
-            dup_conf_score[row_idx] = node_dup_conf_score
-            so_event[row_idx] = "D" if node_dup_conf_score > 0 else "S"
-        if (node.up is not None) and (dup_conf_score_by_node.get(node.up, 0.0) > 0):
-            so_event_parent[row_idx] = "D"
+        if (node.up is not None) and (dup_scores.get(node.up, 0.0) > 0):
+            arrays['so_event_parent'][row_idx] = 'D'
 
-    return pd.DataFrame(
-        {
-            "branch_id": branch_id,
-            "taxon": taxon,
-            "taxid": taxid,
-            "num_sp": num_sp,
-            "num_leaf": num_leaf,
-            "so_event": so_event,
-            "dup_conf_score": dup_conf_score,
-            "parent": parent,
-            "sister": sister,
-            "child1": child1,
-            "child2": child2,
-            "so_event_parent": so_event_parent,
-        },
-        columns=cn,
-    )
+
+def get_misc_node_statistics(tree_file, tax_annot=False, species_parser=None, parser=None):
+    tax_annot = _validate_boolean_flag(tax_annot, "tax_annot")
+    species_parser = _resolve_species_parser_alias(species_parser, parser)
+    tree = _load_og_tree(tree_file, 'tree_file')
+    tree = add_numerical_node_labels(tree)
+    nodes = list(tree.traverse())
+    tree = _annotate_misc_taxonomy(tree, nodes, tax_annot, species_parser)
+    statistics = _misc_descendant_statistics(tree)
+    arrays = _misc_output_arrays(len(nodes))
+    for row_idx, node in enumerate(nodes):
+        _fill_misc_node_row(arrays, row_idx, node, statistics)
+    _fill_misc_parent_events(arrays, nodes, statistics[2])
+    columns = [
+        "branch_id", "taxon", "taxid", "num_sp", "num_leaf", "so_event",
+        "dup_conf_score", "parent", "sister", "child1", "child2", "so_event_parent",
+    ]
+    return pd.DataFrame(arrays, columns=columns)
+
 
 def compute_delta(df, column):
     if not hasattr(df, 'columns'):
@@ -811,7 +885,7 @@ def get_notung_reconcil_stats(file):
 
 def get_root_stats(file):
     file = _coerce_path_argument(file, 'file')
-    out = {}
+    out: dict[str, object] = {}
     try:
         with open(file) as f:
             for line in f:
@@ -874,6 +948,9 @@ def get_aln_stats(file):
         out['len_min'] = 0
         return out
 
+    if len(set(seq_lens_w_gap)) != 1:
+        raise ValueError("all FASTA sequences must have the same aligned length")
+
     out['num_site'] = max(seq_lens_w_gap)
     out['num_seq'] = len(seq_lens)
     out['len_max'] = max(seq_lens)
@@ -902,6 +979,52 @@ def get_iqtree_model_stats(file):
 
 
 
+def _regime_parameter_rows(df):
+    param_rows = df.loc[df['regime'].isnull(), :]
+    invalid = param_rows['param'].isna() | (param_rows['param'].astype(str).str.strip() == '')
+    if invalid.any():
+        raise ValueError("regime2tree requires non-empty param names for rows with missing regime IDs")
+    traits = [column for column in df.columns if column not in {'node_name', 'param', 'regime'}]
+    if not traits:
+        raise ValueError("regime2tree requires at least one trait column after node_name/param/regime")
+    for param, param_df in param_rows.groupby('param', dropna=False):
+        if param_df.loc[:, traits].drop_duplicates().shape[0] > 1:
+            raise ValueError(
+                f"regime2tree contains conflicting values for param '{param}' in trait columns"
+            )
+    return param_rows, traits
+
+
+def _add_regime_parameters(out, param_rows, traits):
+    dedup = param_rows.drop_duplicates(subset='param', keep='first')
+    for row in dedup.loc[:, ['param'] + traits].to_numpy():
+        out.update({
+            f'{row[0]}_{trait}': value
+            for trait, value in zip(traits, row[1:], strict=True)
+        })
+
+
+def _add_regime_gamma_values(out, traits):
+    for trait in traits:
+        alpha_key, sigma_key = f'alpha_{trait}', f'sigma2_{trait}'
+        if (alpha_key not in out) or (sigma_key not in out):
+            continue
+        try:
+            alpha_value = float(str(out[alpha_key]))
+            sigma_value = float(str(out[sigma_key]))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"alpha/sigma2 values must be numeric to compute gamma for trait '{trait}'"
+            ) from exc
+        if (not np.isfinite(alpha_value)) or (not np.isfinite(sigma_value)):
+            raise ValueError(
+                f"alpha/sigma2 values must be finite to compute gamma for trait '{trait}'"
+            )
+        if alpha_value == 0:
+            raise ValueError(f"alpha_{trait} must be non-zero to compute gamma_{trait}")
+        out[f'gamma_{trait}'] = sigma_value / (2 * alpha_value)
+
+
 def regime2tree(file):
     file = _coerce_path_argument(file, 'file')
     try:
@@ -914,79 +1037,15 @@ def regime2tree(file):
     missing_columns = sorted(required_columns - set(df.columns))
     if len(missing_columns) > 0:
         raise ValueError(f"regime2tree requires columns: {missing_columns}")
-    regime_numeric = pd.to_numeric(df['regime'], errors='coerce')
-    invalid_regime_mask = df['regime'].notna() & regime_numeric.isna()
-    if invalid_regime_mask.any():
-        invalid_values = sorted(set(df.loc[invalid_regime_mask, 'regime'].astype(str)))
-        raise ValueError(f"regime column must be numeric or NaN; invalid values: {invalid_values}")
-    non_finite_regime_mask = regime_numeric.notna() & (~np.isfinite(regime_numeric.to_numpy(dtype=float, copy=False)))
-    if non_finite_regime_mask.any():
-        invalid_values = sorted(set(df.loc[non_finite_regime_mask, 'regime'].astype(str)))
-        raise ValueError(f"regime column must contain finite numeric values; invalid values: {invalid_values}")
-    non_integer_regime_mask = regime_numeric.notna() & (regime_numeric != np.floor(regime_numeric))
-    if non_integer_regime_mask.any():
-        invalid_values = sorted(set(df.loc[non_integer_regime_mask, 'regime'].astype(str)))
-        raise ValueError(f"regime column must contain integer IDs; invalid values: {invalid_values}")
-    negative_regime_mask = regime_numeric.notna() & (regime_numeric < 0)
-    if negative_regime_mask.any():
-        invalid_values = sorted(set(df.loc[negative_regime_mask, 'regime'].astype(str)))
-        raise ValueError(f"regime column must contain non-negative IDs; invalid values: {invalid_values}")
-    too_large_regime_mask = regime_numeric.notna() & (regime_numeric > INT64_MAX)
-    if too_large_regime_mask.any():
-        invalid_values = sorted(set(df.loc[too_large_regime_mask, 'regime'].astype(str)))
-        raise ValueError(
-            f"regime column must be <= {INT64_MAX} to avoid integer overflow; invalid values: {invalid_values}"
-        )
     df = df.copy()
-    df['regime'] = regime_numeric
-    out = {}
+    df['regime'] = _validated_regime_series(df, '')
+    out: dict[str, object] = {}
     non_nan_regimes = df['regime'].dropna()
-    if non_nan_regimes.shape[0] == 0:
-        out['num_regime'] = 0
-    else:
-        out['num_regime'] = int(non_nan_regimes.max() + 1)
-    param_rows = df.loc[df['regime'].isnull(), :]
-    invalid_param_mask = param_rows["param"].isna() | (param_rows["param"].astype(str).str.strip() == "")
-    if invalid_param_mask.any():
-        raise ValueError("regime2tree requires non-empty param names for rows with missing regime IDs")
-    params_set = set(param_rows.loc[:, 'param'].values)
-    non_trait_columns = {"node_name", "param", "regime"}
-    traits = [column_name for column_name in df.columns if column_name not in non_trait_columns]
-    if len(traits) == 0:
-        raise ValueError("regime2tree requires at least one trait column after node_name/param/regime")
-    if param_rows.shape[0] > 0:
-        for param, param_df in param_rows.groupby("param", dropna=False):
-            if param_df.loc[:, traits].drop_duplicates().shape[0] > 1:
-                raise ValueError(
-                    f"regime2tree contains conflicting values for param '{param}' in trait columns"
-                )
-    dedup = param_rows.drop_duplicates(subset='param', keep='first')
-    rows = dedup.loc[:, ['param'] + traits].to_numpy()
-    for row in rows:
-        param = row[0]
-        out.update({f'{param}_{trait}': value for trait, value in zip(traits, row[1:])})
-    if all(key in params_set for key in ['alpha', 'sigma2']):
-        for trait in traits:
-            alpha_key = 'alpha_' + trait
-            sigma_key = 'sigma2_' + trait
-            if (alpha_key not in out) or (sigma_key not in out):
-                continue
-            try:
-                alpha_value = float(out[alpha_key])
-                sigma_value = float(out[sigma_key])
-            except (TypeError, ValueError) as exc:
-                raise ValueError(
-                    f"alpha/sigma2 values must be numeric to compute gamma for trait '{trait}'"
-                ) from exc
-            if (not np.isfinite(alpha_value)) or (not np.isfinite(sigma_value)):
-                raise ValueError(
-                    f"alpha/sigma2 values must be finite to compute gamma for trait '{trait}'"
-                )
-            if alpha_value == 0:
-                raise ValueError(
-                    f"alpha_{trait} must be non-zero to compute gamma_{trait}"
-                )
-            out['gamma_' + trait] = sigma_value / (2 * alpha_value)
+    out['num_regime'] = 0 if non_nan_regimes.empty else int(non_nan_regimes.max() + 1)
+    param_rows, traits = _regime_parameter_rows(df)
+    _add_regime_parameters(out, param_rows, traits)
+    if {'alpha', 'sigma2'} <= set(param_rows['param']):
+        _add_regime_gamma_values(out, traits)
     return out
 
 
@@ -997,6 +1056,43 @@ def get_dating_method(file):
             return f.read().replace('\n', '')
     except (OSError, UnicodeDecodeError) as exc:
         raise ValueError(f"Failed to read file: {file}") from exc
+
+
+def _validate_hashable_scalar(value, message):
+    try:
+        hash(value)
+    except TypeError as exc:
+        raise ValueError(message) from exc
+
+
+def _most_recent_table(b, og, target_col, return_col, og_col):
+    required_columns = {'branch_id', 'parent', target_col, return_col, og_col}
+    missing_columns = sorted(required_columns - set(b.columns))
+    if len(missing_columns) > 0:
+        raise ValueError(f"get_most_recent requires columns: {missing_columns}")
+    b_og = b.loc[b[og_col] == og, ['branch_id', 'parent', target_col, return_col]]
+    _validate_non_missing_series_values(b_og['branch_id'], "get_most_recent branch_id column")
+    _validate_hashable_series_values(b_og['branch_id'], "get_most_recent branch_id column")
+    _validate_hashable_series_values(b_og['parent'], "get_most_recent parent column")
+    return b_og.drop_duplicates(subset='branch_id', keep='first').set_index('branch_id', drop=False)
+
+
+def _walk_most_recent(b_og, nl, target_col, target_value, return_col):
+    current_nl = nl
+    visited_nl = set()
+    while True:
+        if current_nl in visited_nl:
+            return np.nan
+        if current_nl not in b_og.index:
+            return np.nan
+        visited_nl.add(current_nl)
+        current_value = b_og.at[current_nl, target_col]
+        if _scalar_values_equal(current_value, target_value):
+            return b_og.at[current_nl, return_col]
+        current_parent = b_og.at[current_nl, 'parent']
+        if pd.isna(current_parent):
+            return np.nan
+        current_nl = current_parent
 
 
 def get_most_recent(b, nl, og, target_col, target_value, return_col, og_col='orthogroup'):
@@ -1010,37 +1106,11 @@ def get_most_recent(b, nl, og, target_col, target_value, return_col, og_col='ort
     _validate_column_name(target_col, "target_col")
     _validate_column_name(return_col, "return_col")
     _validate_column_name(og_col, "og_col")
-    try:
-        hash(nl)
-    except TypeError as exc:
-        raise ValueError("nl must be a hashable scalar branch_id value") from exc
-    try:
-        hash(og)
-    except TypeError as exc:
-        raise ValueError("og must be a hashable value comparable to the orthogroup column") from exc
-    required_columns = {'branch_id', 'parent', target_col, return_col, og_col}
-    missing_columns = sorted(required_columns - set(b.columns))
-    if len(missing_columns) > 0:
-        raise ValueError(f"get_most_recent requires columns: {missing_columns}")
-    b_og = b.loc[b[og_col] == og, ['branch_id', 'parent', target_col, return_col]]
-    _validate_non_missing_series_values(b_og['branch_id'], "get_most_recent branch_id column")
-    _validate_hashable_series_values(b_og['branch_id'], "get_most_recent branch_id column")
-    _validate_hashable_series_values(b_og['parent'], "get_most_recent parent column")
-    b_og = b_og.drop_duplicates(subset='branch_id', keep='first').set_index('branch_id', drop=False)
+    _validate_hashable_scalar(nl, "nl must be a hashable scalar branch_id value")
+    _validate_hashable_scalar(
+        og, "og must be a hashable value comparable to the orthogroup column"
+    )
+    b_og = _most_recent_table(b, og, target_col, return_col, og_col)
     if b_og.empty or (nl not in b_og.index):
         return np.nan
-    current_nl = nl
-    visited_nl = set()
-    while True:
-        if current_nl in visited_nl:
-            return np.nan
-        if current_nl not in b_og.index:
-            return np.nan
-        visited_nl.add(current_nl)
-        current_value = b_og.at[current_nl, target_col]
-        if current_value == target_value:
-            return b_og.at[current_nl, return_col]
-        current_parent = b_og.at[current_nl, 'parent']
-        if pd.isna(current_parent):
-            return np.nan
-        current_nl = current_parent
+    return _walk_most_recent(b_og, nl, target_col, target_value, return_col)
