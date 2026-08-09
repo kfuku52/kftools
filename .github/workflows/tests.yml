@@ -46,6 +46,7 @@ jobs:
         run: ruff check .
 
       - name: Run type checks
+        if: matrix.python-version == '3.10'
         run: mypy kftools
 
       - name: Run tests with coverage
