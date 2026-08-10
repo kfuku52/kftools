@@ -1,6 +1,5 @@
 import math
 import numbers
-import warnings
 from typing import Any
 
 import numpy as np
@@ -144,18 +143,12 @@ def brunner_munzel_test(x: Any, y: Any, alternative: str = "two_sided") -> tuple
     allowed_alternatives = {"greater", "g", "less", "l", "two_sided"}
     if alternative_norm not in allowed_alternatives:
         raise ValueError(f"alternative must be one of {sorted(allowed_alternatives)}")
-    scipy_alternative = {
-        "greater": "greater",
-        "g": "greater",
-        "less": "less",
-        "l": "less",
-        "two_sided": "two-sided",
+    ttype = {
+        "greater": -1,
+        "g": -1,
+        "less": 1,
+        "l": 1,
+        "two_sided": 0,
     }[alternative_norm]
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", RuntimeWarning)
-        result = stats.brunnermunzel(x, y, alternative=scipy_alternative)
-    statistic = float(result.statistic)
-    probability = float(result.pvalue)
-    if (not math.isfinite(statistic)) or (not math.isfinite(probability)):
-        raise ValueError("Brunner-Munzel test is undefined when pooled variance is zero")
+    statistic, _, probability, _, _, _ = bm_test(x, y, ttype=ttype)
     return statistic, probability
