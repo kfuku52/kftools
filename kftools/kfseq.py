@@ -1,10 +1,13 @@
-import re
 import numbers
-import os
+import re
 from collections.abc import Mapping
+from typing import Any
 
 import numpy as np
-NUCLEOTIDES = ('A', 'T', 'C', 'G')
+
+from ._validation import coerce_path_argument
+
+NUCLEOTIDES = ("A", "T", "C", "G")
 CODON_POSITIONS = (0, 1, 2)
 CODON_LENGTH = 3
 
@@ -16,10 +19,18 @@ def _validate_model_string(model):
         raise ValueError("model must not be empty")
 
 
+def _frequency_model_kind(model):
+    has_f1x4 = "F1X4" in model
+    has_f3x4 = "F3X4" in model
+    if has_f1x4 == has_f3x4:
+        raise ValueError("model must contain exactly one of 'F1X4' or 'F3X4'")
+    return "F1X4" if has_f1x4 else "F3X4"
+
+
 def _normalize_nucleotide_frequencies(freqs):
     scale_factor = sum(freqs.values())
     if (not np.isfinite(scale_factor)) or (scale_factor <= 0):
-        raise ValueError('Nucleotide frequencies must have a positive total')
+        raise ValueError("Nucleotide frequencies must have a positive total")
     for nuc in freqs:
         freqs[nuc] = freqs[nuc] / scale_factor
 
@@ -28,33 +39,20 @@ def _canonicalize_codon_frequencies(codon_freqs):
     canonicalized: dict[str, float] = {}
     for codon, codon_freq in codon_freqs.items():
         if (not isinstance(codon, str)) or (len(codon) != CODON_LENGTH):
-            raise ValueError('codon_freqs keys must be codon strings of length 3')
+            raise ValueError("codon_freqs keys must be codon strings of length 3")
         if isinstance(codon_freq, bool) or (not isinstance(codon_freq, numbers.Real)):
-            raise ValueError('codon frequencies must be finite numeric values')
+            raise ValueError("codon frequencies must be finite numeric values")
         codon_freq = float(codon_freq)
         if not np.isfinite(codon_freq):
-            raise ValueError('codon frequencies must be finite numeric values')
+            raise ValueError("codon frequencies must be finite numeric values")
         if codon_freq < 0:
-            raise ValueError('codon frequencies must be non-negative')
+            raise ValueError("codon frequencies must be non-negative")
         codon_upper = codon.upper()
         invalid_nucleotides = sorted(set(codon_upper) - set(NUCLEOTIDES))
         if len(invalid_nucleotides) > 0:
-            raise ValueError(
-                f"codon '{codon}' contains invalid nucleotides: {invalid_nucleotides}"
-            )
+            raise ValueError(f"codon '{codon}' contains invalid nucleotides: {invalid_nucleotides}")
         canonicalized[codon_upper] = canonicalized.get(codon_upper, 0) + codon_freq
     return canonicalized
-
-
-def _interpolate_by_branch_length(min_value, max_value, min_branch_length, max_branch_length):
-    if min_value == max_value:
-        return min_value
-    if (min_branch_length < 0) or (max_branch_length < 0):
-        raise ValueError('Branch lengths must be non-negative')
-    denominator = min_branch_length + max_branch_length
-    if denominator == 0:
-        return (min_value + max_value) / 2
-    return min_value + ((max_value - min_value) * (min_branch_length / denominator))
 
 
 def _validate_nucleotide_frequency_dict(freqs):
@@ -72,32 +70,36 @@ def _validate_nucleotide_frequency_dict(freqs):
             raise ValueError(f"nucleotide frequency for '{nuc}' must be non-negative")
 
 
-def codon2nuc_freqs(codon_freqs=None, model=''):
+def codon2nuc_freqs(
+    codon_freqs: Mapping[str, float] | None = None,
+    model: str = "",
+) -> list[dict[str, float]]:
+    """Convert codon frequencies to F1X4 or F3X4 nucleotide frequencies."""
     if codon_freqs is None:
         codon_freqs = {}
     if not isinstance(codon_freqs, Mapping):
         raise ValueError("codon_freqs must be a mapping from codon strings to frequencies")
     _validate_model_string(model)
+    frequency_model = _frequency_model_kind(model)
     codon_freqs = _canonicalize_codon_frequencies(codon_freqs)
-    if 'F1X4' in model:
-        nuc_freqs = [dict.fromkeys(NUCLEOTIDES, 0)]
+    if frequency_model == "F1X4":
+        nuc_freqs = [dict.fromkeys(NUCLEOTIDES, 0.0)]
         for codon, codon_freq in codon_freqs.items():
             for nuc in NUCLEOTIDES:
                 nuc_count = sum(nuc == c for c in codon)
                 nuc_freqs[0][nuc] += codon_freq * nuc_count / CODON_LENGTH
-    elif 'F3X4' in model:
-        nuc_freqs = [dict.fromkeys(NUCLEOTIDES, 0) for _ in CODON_POSITIONS]
+    else:
+        nuc_freqs = [dict.fromkeys(NUCLEOTIDES, 0.0) for _ in CODON_POSITIONS]
         for codon_pos in CODON_POSITIONS:
             for codon, codon_freq in codon_freqs.items():
                 nuc_freqs[codon_pos][codon[codon_pos]] += codon_freq / CODON_LENGTH
-    else:
-        raise ValueError("model must contain either 'F1X4' or 'F3X4'")
     for freqs in nuc_freqs:
         _normalize_nucleotide_frequencies(freqs)
     return nuc_freqs
 
 
-def nuc_freq2theta(nuc_freqs=None):
+def nuc_freq2theta(nuc_freqs: Any = None) -> list[dict[str, float]]:
+    """Convert nucleotide-frequency dictionaries to mapNH theta parameters."""
     if nuc_freqs is None:
         nuc_freqs = []
     if not isinstance(nuc_freqs, (list, tuple)):
@@ -109,12 +111,12 @@ def nuc_freq2theta(nuc_freqs=None):
         _validate_nucleotide_frequency_dict(freqs)
         freqs = dict(freqs)
         _normalize_nucleotide_frequencies(freqs)
-        AT_freq = freqs['A'] + freqs['T']
-        GC_freq = freqs['G'] + freqs['C']
+        AT_freq = freqs["A"] + freqs["T"]
+        GC_freq = freqs["G"] + freqs["C"]
         theta = GC_freq
-        theta1 = freqs['A'] / (freqs['A'] + freqs['T']) if AT_freq != 0 else 0.5
-        theta2 = freqs['G'] / (freqs['G'] + freqs['C']) if GC_freq != 0 else 0.5
-        thetas.append({'theta': theta, 'theta1': theta1, 'theta2': theta2})
+        theta1 = freqs["A"] / (freqs["A"] + freqs["T"]) if AT_freq != 0 else 0.5
+        theta2 = freqs["G"] / (freqs["G"] + freqs["C"]) if GC_freq != 0 else 0.5
+        thetas.append({"theta": theta, "theta1": theta1, "theta2": theta2})
     return thetas
 
 
@@ -137,43 +139,34 @@ def _validate_theta_entries(thetas):
                 raise ValueError(f"theta entry key '{theta_key}' must be between 0 and 1")
 
 
-def get_mapnh_thetas(model, thetas):
+def get_mapnh_thetas(model: str, thetas: Any) -> str:
+    """Render validated F1X4 or F3X4 theta values as a mapNH model string."""
     _validate_model_string(model)
+    frequency_model = _frequency_model_kind(model)
     if thetas is None:
         thetas = []
     if not isinstance(thetas, (list, tuple)):
         raise ValueError("thetas must be a list or tuple of theta dictionaries")
     _validate_theta_entries(thetas)
     model_frequency = model
-    model_frequency = re.sub(r'X4\+.*', 'X4', model_frequency)
-    model_frequency = re.sub(r'.*\+F', 'F', model_frequency)
+    model_frequency = re.sub(r"X4\+.*", "X4", model_frequency)
+    model_frequency = re.sub(r".*\+F", "F", model_frequency)
+    expected_count = 1 if frequency_model == "F1X4" else len(CODON_POSITIONS)
+    if len(thetas) not in (0, expected_count):
+        raise ValueError(f"{frequency_model} requires either 0 or {expected_count} theta entries; got {len(thetas)}")
     values = []
     for i, theta in enumerate(thetas):
         if len(thetas) == 1:
-            values.append('Full.theta=' + str(theta['theta']))
-            values.append('Full.theta1=' + str(theta['theta1']))
-            values.append('Full.theta2=' + str(theta['theta2']))
+            values.append("Full.theta=" + str(theta["theta"]))
+            values.append("Full.theta1=" + str(theta["theta1"]))
+            values.append("Full.theta2=" + str(theta["theta2"]))
         else:
-            values.append(str(i + 1) + '_Full.theta=' + str(theta['theta']))
-            values.append(str(i + 1) + '_Full.theta1=' + str(theta['theta1']))
-            values.append(str(i + 1) + '_Full.theta2=' + str(theta['theta2']))
+            values.append(str(i + 1) + "_Full.theta=" + str(theta["theta"]))
+            values.append(str(i + 1) + "_Full.theta1=" + str(theta["theta1"]))
+            values.append(str(i + 1) + "_Full.theta2=" + str(theta["theta2"]))
     if len(values) == 0:
-        return model_frequency + '()'
-    return model_frequency + '(' + ','.join(values) + ')'
-
-
-def _coerce_alignment_path(alignment_file):
-    if isinstance(alignment_file, (bytes, bytearray)):
-        raise ValueError("alignment_file must be a path-like string (bytes are not supported)")
-    if not isinstance(alignment_file, (str, os.PathLike)):
-        raise ValueError("alignment_file must be a path-like string")
-    try:
-        alignment_file = os.fspath(alignment_file)
-    except TypeError as exc:
-        raise ValueError("alignment_file must be a path-like string") from exc
-    if isinstance(alignment_file, (bytes, bytearray)):
-        raise ValueError("alignment_file must be a path-like string (bytes are not supported)")
-    return alignment_file
+        return model_frequency + "()"
+    return model_frequency + "(" + ",".join(values) + ")"
 
 
 def _read_target_fasta_sequence(alignment_file, leaf_name):
@@ -184,16 +177,14 @@ def _read_target_fasta_sequence(alignment_file, leaf_name):
     try:
         with open(alignment_file) as f:
             for line in f:
-                if line.startswith('>'):
+                if line.startswith(">"):
                     header = line[1:].strip()
-                    header_id = header.split()[0] if header else ''
+                    header_id = header.split()[0] if header else ""
                     is_target_header = (header == leaf_name) or (header_id == leaf_name)
                     if is_target_header:
                         target_header_count += 1
                         if target_header_count > 1:
-                            raise ValueError(
-                                f"leaf_name '{leaf_name}' appears multiple times in alignment_file"
-                            )
+                            raise ValueError(f"leaf_name '{leaf_name}' appears multiple times in alignment_file")
                         found_target = True
                         in_target = True
                         seq_chunks = []
@@ -203,7 +194,7 @@ def _read_target_fasta_sequence(alignment_file, leaf_name):
                     seq_chunks.append(line.strip())
     except (OSError, UnicodeDecodeError) as exc:
         raise ValueError(f"Failed to read alignment_file: {alignment_file}") from exc
-    seq = ''.join(seq_chunks) if seq_chunks else None
+    seq = "".join(seq_chunks) if seq_chunks else None
     if found_target and (seq is None):
         raise ValueError(f"Sequence for leaf '{leaf_name}' is empty in alignment_file")
     if seq is None:
@@ -214,30 +205,25 @@ def _read_target_fasta_sequence(alignment_file, leaf_name):
 def _f3x4_nucleotide_frequencies(seq, leaf_name):
     invalid_nucleotides = sorted(set(seq) - set(NUCLEOTIDES))
     if len(invalid_nucleotides) > 0:
-        raise ValueError(
-            f"Sequence for leaf '{leaf_name}' contains invalid nucleotides: {invalid_nucleotides}"
-        )
+        raise ValueError(f"Sequence for leaf '{leaf_name}' contains invalid nucleotides: {invalid_nucleotides}")
     if len(seq) < CODON_LENGTH:
-        raise ValueError('F3X4 requires sequences with at least three nucleotides')
+        raise ValueError("F3X4 requires sequences with at least three nucleotides")
     if len(seq) % CODON_LENGTH != 0:
-        raise ValueError('F3X4 requires sequence lengths to be a multiple of three')
+        raise ValueError("F3X4 requires sequence lengths to be a multiple of three")
     seq_codons = [seq[start::3] for start in CODON_POSITIONS]
-    return [
-        {nuc: codon_seq.count(nuc) / len(codon_seq) for nuc in NUCLEOTIDES}
-        for codon_seq in seq_codons
-    ]
+    return [{nuc: codon_seq.count(nuc) / len(codon_seq) for nuc in NUCLEOTIDES} for codon_seq in seq_codons]
 
 
-def alignment2nuc_freqs(leaf_name, alignment_file, model):
+def alignment2nuc_freqs(leaf_name: str, alignment_file: Any, model: str) -> list[dict[str, float]]:
+    """Calculate nucleotide frequencies for one named sequence in a FASTA file."""
     _validate_model_string(model)
+    frequency_model = _frequency_model_kind(model)
     if (not isinstance(leaf_name, str)) or (leaf_name.strip() == ""):
         raise ValueError("leaf_name must be a non-empty string")
-    alignment_file = _coerce_alignment_path(alignment_file)
+    alignment_file = coerce_path_argument(alignment_file, "alignment_file")
     seq = _read_target_fasta_sequence(alignment_file, leaf_name)
-    if 'F1X4' in model:
-        raise NotImplementedError('F1X4 is not yet implemented')
-    if 'F3X4' not in model:
-        raise ValueError("model must contain either 'F1X4' or 'F3X4'")
+    if frequency_model == "F1X4":
+        raise NotImplementedError("F1X4 is not yet implemented")
     return _f3x4_nucleotide_frequencies(seq, leaf_name)
 
 
@@ -273,42 +259,31 @@ def _validate_subroot_nodes(subroot_thetas, tree):
 
 def _validate_subroot_branch_length(branch_length, subroot_name):
     if isinstance(branch_length, bool) or (not isinstance(branch_length, numbers.Real)):
-        raise ValueError(
-            f"Branch length for subroot node '{subroot_name}' must be a finite numeric value"
-        )
+        raise ValueError(f"Branch length for subroot node '{subroot_name}' must be a finite numeric value")
     branch_length = float(branch_length)
     if not np.isfinite(branch_length):
-        raise ValueError(
-            f"Branch length for subroot node '{subroot_name}' must be a finite numeric value"
-        )
+        raise ValueError(f"Branch length for subroot node '{subroot_name}' must be a finite numeric value")
     if branch_length < 0:
-        raise ValueError(
-            f"Branch length for subroot node '{subroot_name}' must be non-negative"
-        )
+        raise ValueError(f"Branch length for subroot node '{subroot_name}' must be non-negative")
     return branch_length
 
 
 def _validate_theta_position_entry(theta_entry, subroot_name, codon_position):
     if not isinstance(theta_entry, dict):
-        raise ValueError(
-            f"subroot_thetas['{subroot_name}'][{codon_position}] must be a dictionary of theta parameters"
-        )
+        raise ValueError(f"subroot_thetas['{subroot_name}'][{codon_position}] must be a dictionary of theta parameters")
     for param_name, param_value in theta_entry.items():
         if isinstance(param_value, bool) or (not isinstance(param_value, numbers.Real)):
             raise ValueError(
-                f"subroot_thetas['{subroot_name}'][{codon_position}]['{param_name}'] "
-                "must be a finite numeric value"
+                f"subroot_thetas['{subroot_name}'][{codon_position}]['{param_name}'] must be a finite numeric value"
             )
         param_value = float(param_value)
         if not np.isfinite(param_value):
             raise ValueError(
-                f"subroot_thetas['{subroot_name}'][{codon_position}]['{param_name}'] "
-                "must be a finite numeric value"
+                f"subroot_thetas['{subroot_name}'][{codon_position}]['{param_name}'] must be a finite numeric value"
             )
         if (param_value < 0) or (param_value > 1):
             raise ValueError(
-                f"subroot_thetas['{subroot_name}'][{codon_position}]['{param_name}'] "
-                "must be between 0 and 1"
+                f"subroot_thetas['{subroot_name}'][{codon_position}]['{param_name}'] must be between 0 and 1"
             )
 
 
@@ -355,20 +330,22 @@ def _average_root_theta_positions(subroot_thetas, subroot_names, params, branch_
     return root_thetas
 
 
-def weighted_mean_root_thetas(subroot_thetas, tree, model):
+def weighted_mean_root_thetas(
+    subroot_thetas: dict[str, Any],
+    tree: Any,
+    model: str,
+) -> list[dict[str, float]]:
+    """Estimate root theta values from immediate children using branch weights."""
     _validate_model_string(model)
+    frequency_model = _frequency_model_kind(model)
     subroot_names, subroot_branch_lengths = _validate_subroot_nodes(subroot_thetas, tree)
     reference_params = _validate_subroot_theta_entries(subroot_thetas, subroot_names)
-    if 'F1X4' in model:
-        raise NotImplementedError('F1X4 is not yet implemented')
-    if 'F3X4' not in model:
-        raise ValueError("model must contain either 'F1X4' or 'F3X4'")
+    if frequency_model == "F1X4":
+        raise NotImplementedError("F1X4 is not yet implemented")
 
     params = list(reference_params)
     branch_lengths = np.asarray(
         [subroot_branch_lengths[subroot_name] for subroot_name in subroot_names],
         dtype=float,
     )
-    return _average_root_theta_positions(
-        subroot_thetas, subroot_names, params, branch_lengths
-    )
+    return _average_root_theta_positions(subroot_thetas, subroot_names, params, branch_lengths)

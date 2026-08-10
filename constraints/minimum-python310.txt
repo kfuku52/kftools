@@ -1,0 +1,9 @@
+# Runtime dependency lower bounds tested on Python 3.10.
+# Keep this separate from package metadata: this file is a reproducibility
+# constraint for CI, while pyproject.toml intentionally declares open lower bounds.
+ete4==4.1.1
+matplotlib==3.6.0
+numpy==1.23.0
+pandas==1.5.0
+scipy==1.9.0
+statsmodels==0.13.5

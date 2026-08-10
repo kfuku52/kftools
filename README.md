@@ -24,8 +24,11 @@ pip install -e '.[dev]'
 ```
 
 Runtime dependencies and their tested minimum versions are declared in
-[`setup.py`](setup.py). CI tests both those minimums and the latest resolved
-versions.
+[`pyproject.toml`](pyproject.toml). CI tests both the latest resolved versions
+and the Python 3.10 minimum set recorded in
+[`constraints/minimum-python310.txt`](constraints/minimum-python310.txt).
+The package ships a `py.typed` marker, so type checkers can consume its public
+annotations.
 
 ## Public modules
 
@@ -35,13 +38,16 @@ versions.
 | `kfseq` | `codon2nuc_freqs`, `nuc_freq2theta`, `get_mapnh_thetas`, `alignment2nuc_freqs`, `weighted_mean_root_thetas` |
 | `kfphylo` | `load_phylo_tree`, `get_tree_height`, `transfer_internal_node_names`, `fill_internal_node_names`, `add_numerical_node_labels`, `transfer_root`, `check_ultrametric`, `taxonomic_annotation` |
 | `kfspecies` | `SpeciesParseResult`, `parse_species_label` |
-| `kfog` | Tree tables, orthogroup/node statistics, OU/regime parsers, alignment and reconciliation statistics |
+| `kfog` | Tree tables, orthogroup/node statistics, reusable ancestor lookup, OU/regime parsers, alignment and reconciliation statistics |
 | `kfstat` | `bm_test`, `brunner_munzel_test` |
 | `kfplot` | `stacked_barplot`, `density_scatter`, `hist_boxplot`, `ols_annotations` |
 | `kfutil` | Dictionary and RGB helpers |
 
 Functions validate malformed, missing, non-finite, and biologically invalid
 inputs and raise `ValueError` with a description of the rejected field.
+Recoverable data gaps, such as gene species absent from a reference species
+tree, are reported with Python warnings and can be filtered or captured with
+the standard `warnings` module.
 
 ## Examples
 
@@ -84,6 +90,31 @@ species = parse_species_label(
 assert species.scientific_name == "Bacillus subtilis subsp. 168"
 ```
 
+Prepare a lookup once when many nearest-ancestor queries use the same table:
+
+```python
+import pandas as pd
+
+from kftools.kfog import prepare_most_recent_lookup
+
+branch_table = pd.DataFrame(
+    {
+        "orthogroup": ["og1", "og1"],
+        "branch_id": [0, 1],
+        "parent": [1, 1],
+        "is_shift": [0, 1],
+        "regime": [0, 1],
+    }
+)
+lookup = prepare_most_recent_lookup(
+    branch_table,
+    target_col="is_shift",
+    return_col="regime",
+)
+regime = lookup.find(0, "og1", target_value=1)
+assert regime == 1
+```
+
 ![kfplot examples](docs/images/kfplot_examples.png)
 
 ## Data and mutation semantics
@@ -93,27 +124,35 @@ assert species.scientific_name == "Bacillus subtilis subsp. 168"
   divisible by three.
 - FASTA inputs passed to `get_aln_stats` must be aligned: every sequence must
   have the same gapped length.
-- `transfer_root` returns a rerooted deep copy and never mutates its input tree.
+- `transfer_root` and `transfer_internal_node_names` return deep-copied results
+  and never mutate their input trees.
 - `fill_internal_node_names`, `add_numerical_node_labels`, and `nwk2table`
   attach attributes to a supplied ETE tree object. Copy the tree first when the
   original must remain untouched.
+- With `sister=True`, `nwk2table` returns the legacy scalar `sister` column and
+  a lossless tuple-valued `sisters` column. `get_misc_node_statistics` likewise
+  exposes `children` and `sisters` tuples while retaining `child1`, `child2`,
+  and `sister` for compatibility.
 - `taxonomic_annotation` requires an initialized ETE/NCBI taxonomy database.
 
 ## Development checks
 
 ```bash
-ruff check .
-mypy kftools
-coverage run -m pytest -q
-coverage report
-python -m build
-twine check dist/*
-pip-audit
+make install
+make check
+make build
+make audit
 ```
 
-CI runs these checks on Python 3.10 through 3.14, verifies the declared minimum
-dependency set, builds both source and wheel distributions, and audits resolved
-runtime dependencies.
+`make check` checks formatting and lint rules, type-checks the package,
+and runs the warning-strict test suite with branch coverage. Individual targets
+(`format`, `lint`, `typecheck`, `test`, and `coverage`) are available for a
+shorter edit-feedback loop.
+
+CI runs compatibility tests on Python 3.10 through 3.13 and the full quality
+suite on Python 3.14. It also verifies the Python 3.10 minimum dependency set,
+builds source and wheel distributions, smoke-tests the installed wheel outside
+the repository, and audits resolved runtime dependencies.
 
 ## License
 

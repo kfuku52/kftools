@@ -1,12 +1,14 @@
+import warnings
+from decimal import Decimal
+from typing import Any
+
 import matplotlib.pyplot
 import numpy as np
 import pandas as pd
-from pandas.api.types import is_scalar
 import scipy.stats as stats
-import statsmodels.api as sm
-from decimal import Decimal
-import warnings
+from pandas.api.types import is_scalar
 
+from ._validation import is_hashable, validate_boolean_flag
 
 _DEFAULT_TEXTXY = object()
 
@@ -54,20 +56,19 @@ def _resolve_series_color(colors, idx):
             return colors[idx % len(colors)]
     if isinstance(colors, (list, tuple)) and (len(colors) > 0):
         return colors[idx % len(colors)]
-    return f'C{idx}'
+    return f"C{idx}"
 
 
 def _coerce_numeric_columns(data, columns, argument_name):
     converted = {}
     for col in columns:
-        numeric_series = pd.to_numeric(data[col], errors='coerce')
+        numeric_series = pd.to_numeric(data[col], errors="coerce")
         non_missing_original = data[col].notna().to_numpy()
         invalid_numeric_mask = non_missing_original & numeric_series.isna().to_numpy()
         if invalid_numeric_mask.any():
             invalid_values = sorted(set(data.loc[invalid_numeric_mask, col].astype(str)))
             raise ValueError(
-                f"{argument_name} columns must contain numeric values; "
-                f"invalid values in '{col}': {invalid_values}"
+                f"{argument_name} columns must contain numeric values; invalid values in '{col}': {invalid_values}"
             )
         numeric_values = numeric_series.to_numpy(dtype=float, copy=False)
         non_finite_mask = non_missing_original & (~np.isfinite(numeric_values))
@@ -81,27 +82,17 @@ def _coerce_numeric_columns(data, columns, argument_name):
     return pd.DataFrame(converted)
 
 
-def _is_hashable(value):
-    try:
-        hash(value)
-    except TypeError:
-        return False
-    return True
-
-
 def _limited_value_examples(values, predicate):
     return [str(value) for value in values if predicate(value)][:5]
 
 
 def _is_non_bool_numeric(value):
-    return (not isinstance(value, (bool, np.bool_))) and isinstance(
-        value, (int, float, np.integer, np.floating)
-    )
+    return (not isinstance(value, (bool, np.bool_))) and isinstance(value, (int, float, np.integer, np.floating))
 
 
 def _validate_hashable_column_values(data, column_name, argument_name):
     values = data[column_name].dropna().to_list()
-    unhashable_examples = _limited_value_examples(values, lambda value: not _is_hashable(value))
+    unhashable_examples = _limited_value_examples(values, lambda value: not is_hashable(value))
     if len(unhashable_examples) > 0:
         raise ValueError(
             f"{argument_name} column '{column_name}' must contain hashable values; "
@@ -113,9 +104,7 @@ def _validate_hashable_column_values(data, column_name, argument_name):
             f"{argument_name} column '{column_name}' must contain scalar values; "
             f"invalid examples: {non_scalar_examples}"
         )
-    complex_examples = _limited_value_examples(
-        values, lambda value: isinstance(value, (complex, np.complexfloating))
-    )
+    complex_examples = _limited_value_examples(values, lambda value: isinstance(value, (complex, np.complexfloating)))
     if complex_examples:
         raise ValueError(
             f"{argument_name} column '{column_name}' must not contain complex values; "
@@ -129,9 +118,7 @@ def _validate_hashable_column_values(data, column_name, argument_name):
             f"{argument_name} column '{column_name}' must not mix bool and numeric non-bool values; "
             f"invalid examples: {bool_numeric_collision_examples}"
         )
-    non_finite_numeric_examples = _limited_value_examples(
-        numeric_values, lambda value: not np.isfinite(float(value))
-    )
+    non_finite_numeric_examples = _limited_value_examples(numeric_values, lambda value: not np.isfinite(float(value)))
     if non_finite_numeric_examples:
         raise ValueError(
             f"{argument_name} column '{column_name}' must not contain non-finite numeric values; "
@@ -144,28 +131,17 @@ def _normalize_plot_category_labels(category_labels, argument_name):
     has_string_label = any(isinstance(label, str) for label in labels)
     has_non_string_label = any(not isinstance(label, str) for label in labels)
     if has_string_label and has_non_string_label:
-        raise ValueError(
-            f"{argument_name} grouping categories must not mix string and non-string values"
-        )
+        raise ValueError(f"{argument_name} grouping categories must not mix string and non-string values")
     return labels
-
-
-def _validate_boolean_flag(flag_value, argument_name):
-    if not isinstance(flag_value, (bool, np.bool_)):
-        raise ValueError(f"{argument_name} must be a boolean value")
-    return bool(flag_value)
 
 
 def _validate_stacked_column_list(columns, axis_name):
     if len(columns) == 0:
         raise ValueError(f"{axis_name} list must contain at least one column")
-    invalid_columns = [
-        col for col in columns if (not isinstance(col, str)) or (col.strip() == "")
-    ]
+    invalid_columns = [col for col in columns if (not isinstance(col, str)) or (col.strip() == "")]
     if invalid_columns:
         raise ValueError(
-            f"{axis_name} list must contain non-empty string column names; "
-            f"invalid entries: {invalid_columns}"
+            f"{axis_name} list must contain non-empty string column names; invalid entries: {invalid_columns}"
         )
     if len(set(columns)) != len(columns):
         raise ValueError(f"{axis_name} list must not contain duplicate column names")
@@ -205,37 +181,37 @@ def _validate_stacked_axes(x, y, data):
 
 def _stacked_frames(x, y, data, x_is_list, y_is_list):
     dfs = {
-        'x': _coerce_numeric_columns(data, x, 'x') if x_is_list else pd.DataFrame(data.loc[:, x]),
-        'y': _coerce_numeric_columns(data, y, 'y') if y_is_list else pd.DataFrame(data.loc[:, y]),
+        "x": _coerce_numeric_columns(data, x, "x") if x_is_list else pd.DataFrame(data.loc[:, x]),
+        "y": _coerce_numeric_columns(data, y, "y") if y_is_list else pd.DataFrame(data.loc[:, y]),
     }
     if x_is_list:
-        dfs['x'] = dfs['x'].cumsum(axis=1)
+        dfs["x"] = dfs["x"].cumsum(axis=1)
     if y_is_list:
-        dfs['y'] = dfs['y'].cumsum(axis=1)
-    return dfs, pd.concat([dfs['x'], dfs['y']], axis=1)
+        dfs["y"] = dfs["y"].cumsum(axis=1)
+    return dfs, pd.concat([dfs["x"], dfs["y"]], axis=1)
 
 
 def _draw_stacked_bars(ax, x, y, colors, dfs, df, x_is_list):
     if x_is_list:
-        columns, category, draw = dfs['x'].columns, y, ax.barh
-        category_argument = 'y'
+        columns, category, draw = dfs["x"].columns, y, ax.barh
+        category_argument = "y"
     else:
-        columns, category, draw = dfs['y'].columns, x, ax.bar
-        category_argument = 'x'
+        columns, category, draw = dfs["y"].columns, x, ax.bar
+        category_argument = "x"
+    grouped = df.groupby(category, sort=False)[list(columns)].mean()
     for i in reversed(range(len(columns))):
         value_column = columns[i]
-        group_source = df.loc[:, [category, value_column]].copy()
-        group_source[value_column] = pd.to_numeric(group_source[value_column], errors='coerce')
-        grouped = group_source.groupby(category, sort=False)[value_column].mean().dropna()
+        grouped_values = grouped[value_column].dropna()
         draw(
-            _normalize_plot_category_labels(grouped.index, argument_name=category_argument),
-            grouped.values,
+            _normalize_plot_category_labels(grouped_values.index, argument_name=category_argument),
+            grouped_values.values,
             color=_resolve_series_color(colors, i),
             linewidth=0,
         )
 
 
-def stacked_barplot(x, y, data, colors, ax):
+def stacked_barplot(x: Any, y: Any, data: Any, colors: Any, ax: Any) -> Any:
+    """Draw horizontally or vertically stacked means grouped by a category."""
     if not hasattr(data, "columns"):
         raise ValueError("data must be a pandas DataFrame-like object with columns")
     x_is_list, y_is_list = _validate_stacked_axes(x, y, data)
@@ -256,20 +232,22 @@ def stacked_barplot(x, y, data, colors, ax):
 
 def _validate_density_options(cor, diag, hue_log, show_cor_p, return_ims, cbar, num_bin, vmin, vmax):
     flags = [
-        _validate_boolean_flag(value, name)
+        validate_boolean_flag(value, name)
         for name, value in [
-            ("cor", cor), ("diag", diag), ("hue_log", hue_log),
-            ("show_cor_p", show_cor_p), ("return_ims", return_ims), ("cbar", cbar),
+            ("cor", cor),
+            ("diag", diag),
+            ("hue_log", hue_log),
+            ("show_cor_p", show_cor_p),
+            ("return_ims", return_ims),
+            ("cbar", cbar),
         ]
     ]
     if isinstance(num_bin, bool) or (not isinstance(num_bin, (int, np.integer))) or (num_bin <= 0):
         raise ValueError("num_bin must be a positive integer")
-    for bound_name, bound_value in [('vmin', vmin), ('vmax', vmax)]:
+    for bound_name, bound_value in [("vmin", vmin), ("vmax", vmax)]:
         if bound_value is None:
             continue
-        if isinstance(bound_value, bool) or (
-            not isinstance(bound_value, (int, float, np.integer, np.floating))
-        ):
+        if isinstance(bound_value, bool) or (not isinstance(bound_value, (int, float, np.integer, np.floating))):
             raise ValueError(f"{bound_name} must be None or a finite numeric value")
         if not np.isfinite(float(bound_value)):
             raise ValueError(f"{bound_name} must be None or a finite numeric value")
@@ -290,15 +268,15 @@ def _density_xy_values(x, y, df):
         if xval.shape != yval.shape:
             raise ValueError("x and y must have the same shape when df is None")
         valid = np.isfinite(xval) & np.isfinite(yval)
-        return 'x', 'y', xval[valid], yval[valid]
+        return "x", "y", xval[valid], yval[valid]
     if not isinstance(x, str) or not isinstance(y, str):
         raise ValueError("x and y must be string column names when df is provided")
     if (x not in df.columns) or (y not in df.columns):
         raise ValueError(f"df must include columns '{x}' and '{y}'")
     df_xy = df.loc[:, [x, y]].replace([np.inf, -np.inf], np.nan).dropna(axis=0)
     try:
-        xval = pd.to_numeric(df_xy.iloc[:, 0], errors='raise').to_numpy(dtype=float)
-        yval = pd.to_numeric(df_xy.iloc[:, 1], errors='raise').to_numpy(dtype=float)
+        xval = pd.to_numeric(df_xy.iloc[:, 0], errors="raise").to_numpy(dtype=float)
+        yval = pd.to_numeric(df_xy.iloc[:, 1], errors="raise").to_numpy(dtype=float)
     except Exception as exc:
         raise ValueError(f"df columns '{x}' and '{y}' must contain numeric values") from exc
     valid = np.isfinite(xval) & np.isfinite(yval)
@@ -306,32 +284,30 @@ def _density_xy_values(x, y, df):
 
 
 def _fit_density_glm(xval, yval, reg_family):
+    import statsmodels.api as sm
+
     if not hasattr(reg_family, "link"):
         raise ValueError("reg_family must be a statsmodels family object with a 'link' attribute")
     predictor = "_kftools_predictor"
-    exog = sm.add_constant(pd.DataFrame({predictor: xval}), has_constant='add')
+    exog = sm.add_constant(pd.DataFrame({predictor: xval}), has_constant="add")
     try:
         result = sm.GLM(yval, exog, family=reg_family).fit()
     except Exception as exc:
-        raise ValueError(
-            "GLM fit failed in density_scatter; check reg_family compatibility and input values"
-        ) from exc
+        raise ValueError("GLM fit failed in density_scatter; check reg_family compatibility and input values") from exc
     endpoints = (float(xval.min()), float(xval.max()))
     x_predict = (
         np.array([endpoints[0]], dtype=float)
         if endpoints[0] == endpoints[1]
         else np.linspace(*endpoints, num=100, endpoint=True)
     )
-    predict_exog = sm.add_constant(pd.DataFrame({predictor: x_predict}), has_constant='add')
+    predict_exog = sm.add_constant(pd.DataFrame({predictor: x_predict}), has_constant="add")
     return x_predict, np.asarray(result.predict(predict_exog), dtype=float)
 
 
 def _apply_density_log_link(xval, yval, y_predict):
     if np.any(y_predict <= 0):
-        raise ValueError(
-            "GLM predicted non-positive values; cannot apply log transform in density_scatter"
-        )
-    with np.errstate(divide='ignore', invalid='ignore'):
+        raise ValueError("GLM predicted non-positive values; cannot apply log transform in density_scatter")
+    with np.errstate(divide="ignore", invalid="ignore"):
         transformed_y = np.log(yval)
     valid = np.isfinite(transformed_y)
     if not valid.any():
@@ -362,7 +338,7 @@ def _explicit_plot_range(plot_range):
 
 def _density_plot_range(plot_range, xval, yval):
     if isinstance(plot_range, str):
-        if plot_range not in ('each', 'ceil'):
+        if plot_range not in ("each", "ceil"):
             raise ValueError("plot_range must be either 'each'/'ceil' or [xmin, xmax, ymin, ymax]")
         bounds = (np.floor(xval.min()), np.ceil(xval.max()), np.floor(yval.min()), np.ceil(yval.max()))
     else:
@@ -382,7 +358,7 @@ def _density_histogram(xval, yval, bounds, num_bin, hue_log):
     xyrange = [[xmin, xmax], [ymin, ymax]]
     histogram, _, _ = np.histogram2d(xval, yval, range=xyrange, bins=bins)
     if hue_log:
-        with np.errstate(divide='ignore'):
+        with np.errstate(divide="ignore"):
             histogram = np.log2(histogram)
     x_idx = np.floor((xval - xmin) * bins[0] / (xmax - xmin)).astype(int)
     y_idx = np.floor((yval - ymin) * bins[1] / (ymax - ymin)).astype(int)
@@ -403,9 +379,9 @@ def _add_density_colorbar(ax, image, hue_log):
         ax=ax,
         format=formatter,
     )
-    colorbar.ax.tick_params(axis='y', which='major', direction='out', length=3, width=1, pad=2)
+    colorbar.ax.tick_params(axis="y", which="major", direction="out", length=3, width=1, pad=2)
     if hue_log:
-        colorbar.ax.text(0.5, 1.001, 'log$_2$ count', ha='center', va='bottom')
+        colorbar.ax.text(0.5, 1.001, "log$_2$ count", ha="center", va="bottom")
     formatter.set_powerlimits((-2, 2))
     formatter.set_scientific(True)
     colorbar.update_ticks()
@@ -416,8 +392,8 @@ def _density_correlation_title(xval, yval, show_cor_p):
     pearson, pearson_p = _pearsonr_fast(xval=xval, yval=yval)
     if not show_cor_p:
         return f"ρ={spearman:.2f}, r={pearson:.2f}"
-    spearman_p_text = '0' if spearman_p == 0 else f"{spearman_p:.2e}"
-    pearson_p_text = '0' if pearson_p == 0 else f"{pearson_p:.2e}"
+    spearman_p_text = "0" if spearman_p == 0 else f"{spearman_p:.2e}"
+    pearson_p_text = "0" if pearson_p == 0 else f"{pearson_p:.2e}"
     return f"ρ={spearman:.2f} p={spearman_p_text}, r={pearson:.2f} p={pearson_p_text}"
 
 
@@ -426,40 +402,62 @@ def _draw_density_scatter(ax, plot_data, labels, options, correlation_values, gl
     xlabel, ylabel = labels
     cmap, vmin, vmax, cbar, hue_log, cor, show_cor_p, diag, plot_range = options
     image = ax.imshow(
-        np.flipud(histogram.T), cmap=cmap, extent=np.array(xyrange).flatten(),
-        vmin=vmin, vmax=vmax, interpolation='none', origin='upper', aspect="auto",
+        np.flipud(histogram.T),
+        cmap=cmap,
+        extent=np.array(xyrange).flatten(),
+        vmin=vmin,
+        vmax=vmax,
+        interpolation="none",
+        origin="upper",
+        aspect="auto",
     )
-    ax.plot(low_x, low_y, '.', color='darkblue')
+    ax.plot(low_x, low_y, ".", color="darkblue")
     if cbar:
         _add_density_colorbar(ax, image, hue_log)
     if glm_prediction is not None:
-        ax.plot(*glm_prediction, '-', color="red", lw=2)
+        ax.plot(*glm_prediction, "-", color="red", lw=2)
     xmin, xmax, ymin, ymax = bounds
-    if isinstance(plot_range, str) and (plot_range == 'ceil'):
+    if isinstance(plot_range, str) and (plot_range == "ceil"):
         xymin, xymax = min(xmin, ymin), max(xmax, ymax)
         ax.set_xlim(xymin, xymax)
         ax.set_ylim(xymin, xymax)
     else:
         ax.set_xlim(xmin, xmax)
         ax.set_ylim(ymin, ymax)
-    ax.tick_params(axis='both', which='major', direction='out', length=6, width=1, pad=2)
+    ax.tick_params(axis="both", which="major", direction="out", length=6, width=1, pad=2)
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
     if cor:
         correlation_x, correlation_y = correlation_values
         ax.set_title(
             _density_correlation_title(correlation_x, correlation_y, show_cor_p),
-            fontsize=matplotlib.rcParams['font.size'],
+            fontsize=matplotlib.rcParams["font.size"],
         )
     if diag:
         diagonal = np.asarray([min(xmin, ymin), max(xmax, ymax)], dtype=float)
-        ax.plot(diagonal, diagonal, '-', color='black', lw=1)
+        ax.plot(diagonal, diagonal, "-", color="black", lw=1)
     return image
 
 
-def density_scatter(x, y, df=None, ax=None, cor=True, diag=False, reg_family=None, hue_log=False,
-                    show_cor_p=True, plot_range='each', return_ims=False, vmin=None, vmax=None,
-                    cbar=True, cmap='jet', num_bin=20):
+def density_scatter(
+    x: Any,
+    y: Any,
+    df: Any = None,
+    ax: Any = None,
+    cor: bool = True,
+    diag: bool = False,
+    reg_family: Any = None,
+    hue_log: bool = False,
+    show_cor_p: bool = True,
+    plot_range: Any = "each",
+    return_ims: bool = False,
+    vmin: float | None = None,
+    vmax: float | None = None,
+    cbar: bool = True,
+    cmap: Any = "jet",
+    num_bin: int = 20,
+) -> Any:
+    """Draw a density-colored scatter plot with optional correlation and GLM."""
     cor, diag, hue_log, show_cor_p, return_ims, cbar, num_bin = _validate_density_options(
         cor, diag, hue_log, show_cor_p, return_ims, cbar, num_bin, vmin, vmax
     )
@@ -469,13 +467,11 @@ def density_scatter(x, y, df=None, ax=None, cor=True, diag=False, reg_family=Non
     glm_prediction = None
     if reg_family is not None:
         x_predict, y_predict = _fit_density_glm(xval, yval, reg_family)
-        if reg_family.link.__class__.__name__.lower() == 'log':
+        if reg_family.link.__class__.__name__.lower() == "log":
             xval, yval, y_predict = _apply_density_log_link(xval, yval, y_predict)
         glm_prediction = (x_predict, y_predict)
     bounds = _density_plot_range(plot_range, xval, yval)
-    xyrange, hh, xdat1, ydat1 = _density_histogram(
-        xval, yval, bounds, num_bin, hue_log
-    )
+    xyrange, hh, xdat1, ydat1 = _density_histogram(xval, yval, bounds, num_bin, hue_log)
 
     created_internal_ax = False
     if ax is None:
@@ -512,30 +508,28 @@ def _validate_hist_inputs(df, x, category, alpha, box_step):
         raise ValueError(f"category column '{category}' was not found in df")
     if x not in df.columns:
         raise ValueError(f"x column '{x}' was not found in df")
-    alpha = _finite_plot_number(
-        alpha, "alpha must be a finite numeric value between 0 and 1"
-    )
+    alpha = _finite_plot_number(alpha, "alpha must be a finite numeric value between 0 and 1")
     if (alpha < 0) or (alpha > 1):
         raise ValueError("alpha must be between 0 and 1")
-    box_step = _finite_plot_number(
-        box_step, "box_step must be a positive finite numeric value"
-    )
+    box_step = _finite_plot_number(box_step, "box_step must be a positive finite numeric value")
     if box_step <= 0:
         raise ValueError("box_step must be a positive finite numeric value")
     return df, alpha, box_step
 
 
 def _finite_plot_number(value, error_message):
-    if isinstance(value, bool) or (
-        not isinstance(value, (int, float, np.integer, np.floating))
-    ) or (not np.isfinite(float(value))):
+    if (
+        isinstance(value, bool)
+        or (not isinstance(value, (int, float, np.integer, np.floating)))
+        or (not np.isfinite(float(value)))
+    ):
         raise ValueError(error_message)
     return float(value)
 
 
 def _hist_numeric_frame(df, x, category):
-    _validate_hashable_column_values(data=df, column_name=category, argument_name='category')
-    x_numeric = pd.to_numeric(df[x], errors='coerce')
+    _validate_hashable_column_values(data=df, column_name=category, argument_name="category")
+    x_numeric = pd.to_numeric(df[x], errors="coerce")
     invalid_x_mask = df[x].notna() & x_numeric.isna()
     if invalid_x_mask.any():
         invalid_values = sorted(set(df.loc[invalid_x_mask, x].astype(str)))
@@ -614,9 +608,7 @@ def _hist_categories_and_colors(df, category, colors):
         observed = df[category].dropna().tolist()
         unknown = [category_value for category_value in colors if category_value not in observed]
         if unknown:
-            raise ValueError(
-                f"colors contains categories that are not present in df[{category!r}]: {unknown}"
-            )
+            raise ValueError(f"colors contains categories that are not present in df[{category!r}]: {unknown}")
     return category_values
 
 
@@ -628,8 +620,8 @@ def _hist_category_color(colors, category_value, index):
     elif isinstance(colors, (list, tuple)):
         color = colors[index % len(colors)] if colors else None
     else:
-        color = f'C{index}'
-    return f'C{index}' if color is None else color
+        color = f"C{index}"
+    return f"C{index}" if color is None else color
 
 
 def _draw_hist_box_categories(ax, df, x, category, category_values, colors, bins, alpha, box_step):
@@ -642,24 +634,45 @@ def _draw_hist_box_categories(ax, df, x, category, category_values, colors, bins
         if values.size == 0:
             raise ValueError(f"Category '{category_value}' has no non-NaN values in column '{x}'")
         ax.hist(
-            values, bins=bins, cumulative=True, histtype='step', lw=1, alpha=alpha,
-            density=True, color=color, label=category_value,
+            values,
+            bins=bins,
+            cumulative=True,
+            histtype="step",
+            lw=1,
+            alpha=alpha,
+            density=True,
+            color=color,
+            label=category_value,
         )
         try:
             box = ax.boxplot(
-                values, positions=[box_position], orientation='horizontal',
-                showfliers=False, widths=[0.1],
+                values,
+                positions=[box_position],
+                orientation="horizontal",
+                showfliers=False,
+                widths=[0.1],
             )
         except TypeError:
             box = ax.boxplot(values, positions=[box_position], vert=False, showfliers=False, widths=[0.1])
-        for element in ['boxes', 'whiskers', 'fliers', 'means', 'medians', 'caps']:
-            matplotlib.pyplot.setp(box[element], color=color, linestyle='solid')
+        for element in ["boxes", "whiskers", "fliers", "means", "medians", "caps"]:
+            matplotlib.pyplot.setp(box[element], color=color, linestyle="solid")
         yticks.append(box_position)
         box_position -= box_step
     return yticks
 
 
-def hist_boxplot(x='', category='', df=None, colors=None, xlim=None, bins=None, alpha=0.9, box_step=0.15, ax=None):
+def hist_boxplot(
+    x: str = "",
+    category: str = "",
+    df: Any = None,
+    colors: Any = None,
+    xlim: Any = None,
+    bins: Any = None,
+    alpha: float = 0.9,
+    box_step: float = 0.15,
+    ax: Any = None,
+) -> Any:
+    """Draw cumulative histograms and compact box plots by category."""
     df, alpha, box_step = _validate_hist_inputs(df, x, category, alpha, box_step)
     colors = {} if colors is None else colors
     xlim = [] if xlim is None else xlim
@@ -674,11 +687,9 @@ def hist_boxplot(x='', category='', df=None, colors=None, xlim=None, bins=None, 
         created_internal_ax = True
 
     try:
-        yticks = _draw_hist_box_categories(
-            ax, df, x, category, category_values, colors, bins, alpha, box_step
-        )
+        yticks = _draw_hist_box_categories(ax, df, x, category, category_values, colors, bins, alpha, box_step)
         ax.set_xlabel(x)
-        ax.set_ylabel('Cumulative frequency')
+        ax.set_ylabel("Cumulative frequency")
         ax.set_xlim(np.mean([xlim[0], min(bins)]), np.mean([xlim[1], max(bins)]))
         ax.set_ylim(-0.02, 1.1 + (box_step * len(category_values)))
         ax.set_yticks(yticks)
@@ -693,7 +704,7 @@ def hist_boxplot(x='', category='', df=None, colors=None, xlim=None, bins=None, 
 
 def _normalize_annotation_stats(stats):
     if stats is None:
-        stats = ['N', 'slope', 'slope_p']
+        stats = ["N", "slope", "slope_p"]
     elif isinstance(stats, str):
         stats = [stats]
     else:
@@ -701,7 +712,7 @@ def _normalize_annotation_stats(stats):
             stats = list(stats)
         except TypeError as exc:
             raise ValueError("stats must be a string or a sequence of statistic names") from exc
-    allowed = {'N', 'slope', 'slope_p', 'rsquared', 'rsquared_p'}
+    allowed = {"N", "slope", "slope_p", "rsquared", "rsquared_p"}
     invalid = [stat for stat in stats if (not isinstance(stat, str)) or (stat not in allowed)]
     if invalid:
         raise ValueError(f"stats contains unsupported entries: {invalid}")
@@ -728,7 +739,7 @@ def _annotation_text_coordinates(textxy):
 
 def _annotation_numeric_data(x, y, data):
     if data is None:
-        data, x, y = pd.DataFrame({'X': x, 'Y': y}), 'X', 'Y'
+        data, x, y = pd.DataFrame({"X": x, "Y": y}), "X", "Y"
     elif not hasattr(data, "columns"):
         raise ValueError("data must be a pandas DataFrame-like object with columns")
     if not isinstance(x, str) or not isinstance(y, str):
@@ -738,8 +749,8 @@ def _annotation_numeric_data(x, y, data):
     if data.shape[0] < 2:
         raise ValueError("ols_annotations requires at least 2 rows")
     try:
-        x_numeric = pd.to_numeric(data[x], errors='raise').astype(float)
-        y_numeric = pd.to_numeric(data[y], errors='raise').astype(float)
+        x_numeric = pd.to_numeric(data[x], errors="raise").astype(float)
+        y_numeric = pd.to_numeric(data[y], errors="raise").astype(float)
     except Exception as exc:
         raise ValueError("ols_annotations requires numeric x and y values") from exc
     if (not np.isfinite(x_numeric).all()) or (not np.isfinite(y_numeric).all()):
@@ -750,21 +761,23 @@ def _annotation_numeric_data(x, y, data):
 
 
 def _fit_annotation_model(data, x, y, method, y_has_variation):
-    exog = sm.add_constant(data.loc[:, [x]], has_constant='add')
+    import statsmodels.api as sm
+
+    exog = sm.add_constant(data.loc[:, [x]], has_constant="add")
     response = data.loc[:, y]
-    if method == 'ols':
+    if method == "ols":
         try:
             return sm.OLS(response, exog).fit()
         except Exception as exc:
             raise ValueError("ols fit failed in ols_annotations") from exc
-    if method != 'quantreg':
+    if method != "quantreg":
         raise ValueError("method must be either 'ols' or 'quantreg'")
     if not y_has_variation:
         return None
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", RuntimeWarning)
-            with np.errstate(divide='ignore', invalid='ignore', over='ignore', under='ignore'):
+            with np.errstate(divide="ignore", invalid="ignore", over="ignore", under="ignore"):
                 return sm.QuantReg(response, exog).fit(q=0.5)
     except Exception:
         return None
@@ -781,7 +794,7 @@ def _result_value(result_values, key):
 def _ols_r_squared(result, y_has_variation):
     if (float(result.df_resid) <= 0) or (not y_has_variation):
         return np.nan, np.nan
-    with np.errstate(divide='ignore', invalid='ignore'):
+    with np.errstate(divide="ignore", invalid="ignore"):
         values = (result.rsquared_adj, result.f_pvalue)
     return tuple(_finite_result_scalar(value) for value in values)
 
@@ -795,8 +808,8 @@ def _finite_result_scalar(value):
 
 
 def _quantreg_r_squared(result):
-    with np.errstate(divide='ignore', invalid='ignore'):
-        value = getattr(result, 'prsquared', np.nan)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        value = getattr(result, "prsquared", np.nan)
     try:
         value = float(value)
     except (TypeError, ValueError):
@@ -805,37 +818,43 @@ def _quantreg_r_squared(result):
 
 
 def _annotation_statistics(result, x, method, requested_stats, y_has_variation):
-    values = {'slope': np.nan, 'slope_p': np.nan, 'rsquared': np.nan, 'rsquared_p': np.nan}
+    values = {"slope": np.nan, "slope_p": np.nan, "rsquared": np.nan, "rsquared_p": np.nan}
     if result is None:
         return values
-    if {'slope', 'slope_p'} & set(requested_stats):
-        values['slope'] = _result_value(result.params, x)
-        values['slope_p'] = _result_value(result.pvalues, x)
-    if not ({'rsquared', 'rsquared_p'} & set(requested_stats)):
+    if {"slope", "slope_p"} & set(requested_stats):
+        values["slope"] = _result_value(result.params, x)
+        values["slope_p"] = _result_value(result.pvalues, x)
+    if not ({"rsquared", "rsquared_p"} & set(requested_stats)):
         return values
-    if method == 'ols':
-        values['rsquared'], values['rsquared_p'] = _ols_r_squared(result, y_has_variation)
+    if method == "ols":
+        values["rsquared"], values["rsquared_p"] = _ols_r_squared(result, y_has_variation)
     else:
-        values['rsquared'] = _quantreg_r_squared(result)
+        values["rsquared"] = _quantreg_r_squared(result)
     return values
 
 
 def _annotation_text(stats, sample_size, values):
     formats = {
-        'N': lambda: f'N = {sample_size:,}\n',
-        'slope': lambda: f"slope = {Decimal(values['slope']):.2f}\n",
-        'slope_p': lambda: f"P = {Decimal(values['slope_p']):.2E}\n",
-        'rsquared': lambda: f"R2 = {Decimal(values['rsquared']):.2f}\n",
-        'rsquared_p': lambda: f"P = {Decimal(values['rsquared_p']):.2E}\n",
+        "N": lambda: f"N = {sample_size:,}\n",
+        "slope": lambda: f"slope = {Decimal(values['slope']):.2f}\n",
+        "slope_p": lambda: f"P = {Decimal(values['slope_p']):.2E}\n",
+        "rsquared": lambda: f"R2 = {Decimal(values['rsquared']):.2f}\n",
+        "rsquared_p": lambda: f"P = {Decimal(values['rsquared_p']):.2E}\n",
     }
-    return ''.join(formats[stat]() for stat in stats)
+    return "".join(formats[stat]() for stat in stats)
 
 
 def _draw_ols_annotation(ax, data, x, y_values, result, textxy, text, style):
     color, font_size, textva, textha = style
     ax.text(
-        textxy[0], textxy[1], text, transform=ax.transAxes, va=textva,
-        ha=textha, color=color, fontsize=font_size,
+        textxy[0],
+        textxy[1],
+        text,
+        transform=ax.transAxes,
+        va=textva,
+        ha=textha,
+        color=color,
+        fontsize=font_size,
     )
     sample_size = data.shape[0]
     x_endpoints = data[x].to_numpy(copy=False)[[0, sample_size - 1]]
@@ -847,8 +866,20 @@ def _draw_ols_annotation(ax, data, x, y_values, result, textxy, text, style):
     ax.plot(x_endpoints, y_endpoints, color=color)
 
 
-def ols_annotations(x, y, data=None, ax=None, color='black', font_size=8, textxy=_DEFAULT_TEXTXY, textva='top',
-                    textha='left', method='quantreg', stats=None):
+def ols_annotations(
+    x: str,
+    y: str,
+    data: Any = None,
+    ax: Any = None,
+    color: Any = "black",
+    font_size: float = 8,
+    textxy: Any = _DEFAULT_TEXTXY,
+    textva: str = "top",
+    textha: str = "left",
+    method: str = "quantreg",
+    stats: Any = None,
+) -> Any:
+    """Fit a linear or quantile model and annotate its statistics on an axis."""
     stats = _normalize_annotation_stats(stats)
     textxy = _annotation_text_coordinates(textxy)
     x, y, data = _annotation_numeric_data(x, y, data)
@@ -863,7 +894,13 @@ def ols_annotations(x, y, data=None, ax=None, color='black', font_size=8, textxy
         created_internal_ax = True
     try:
         _draw_ols_annotation(
-            ax, data, x, y_values, res, textxy, text,
+            ax,
+            data,
+            x,
+            y_values,
+            res,
+            textxy,
+            text,
             (color, font_size, textva, textha),
         )
     except Exception:
@@ -871,24 +908,3 @@ def ols_annotations(x, y, data=None, ax=None, color='black', font_size=8, textxy
             matplotlib.pyplot.close(ax.figure)
         raise
     return ax
-
-
-if __name__ == "__main__":
-    matplotlib.pyplot.interactive(False)
-    nrow = 2
-    ncol = 2
-    fig, axes = matplotlib.pyplot.subplots(nrows=nrow, ncols=ncol, figsize=(4 * ncol, 4 * nrow))
-
-    ax = axes[0, 0]
-    x = np.random.normal(loc=0, scale=1, size=10000)
-    y = x + np.random.normal(loc=1, scale=0.1, size=10000)
-    density_scatter(x=x, y=y, ax=ax)
-    fig.show()
-
-    ax = axes[0, 1]
-    x = np.random.normal(loc=0, scale=1, size=10000)
-    y = x + np.random.normal(loc=1, scale=1, size=10000)
-    density_scatter(x=x, y=y, ax=ax, diag=True)
-
-    fig.tight_layout()
-    fig.show()

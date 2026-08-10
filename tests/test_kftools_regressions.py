@@ -11,12 +11,7 @@ import statsmodels.api as sm
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from kftools import kfexpression
-from kftools import kfog
-from kftools import kfphylo
-from kftools import kfplot
-from kftools import kfseq
-from kftools import kfspecies
+from kftools import kfexpression, kfog, kfphylo, kfplot, kfseq, kfspecies
 
 
 class TestKFToolsRegressions(unittest.TestCase):
@@ -66,14 +61,10 @@ class TestKFToolsRegressions(unittest.TestCase):
             os.unlink(path)
 
     def test_theta_values_are_normalized_and_bounded(self):
-        theta = kfseq.nuc_freq2theta(
-            [{"A": 1.0, "T": 1.0, "C": 1.0, "G": 1.0}]
-        )
+        theta = kfseq.nuc_freq2theta([{"A": 1.0, "T": 1.0, "C": 1.0, "G": 1.0}])
         self.assertEqual(theta, [{"theta": 0.5, "theta1": 0.5, "theta2": 0.5}])
         with self.assertRaisesRegex(ValueError, "positive total"):
-            kfseq.nuc_freq2theta(
-                [{"A": 0.0, "T": 0.0, "C": 0.0, "G": 0.0}]
-            )
+            kfseq.nuc_freq2theta([{"A": 0.0, "T": 0.0, "C": 0.0, "G": 0.0}])
         with self.assertRaisesRegex(ValueError, "between 0 and 1"):
             kfseq.get_mapnh_thetas(
                 "F3X4",
@@ -90,12 +81,8 @@ class TestKFToolsRegressions(unittest.TestCase):
                 "C": [{"theta": 0.9}] * 3,
             }
 
-        low_middle = kfseq.weighted_mean_root_thetas(
-            values(0.2), tree, "F3X4"
-        )[0]["theta"]
-        high_middle = kfseq.weighted_mean_root_thetas(
-            values(0.8), tree, "F3X4"
-        )[0]["theta"]
+        low_middle = kfseq.weighted_mean_root_thetas(values(0.2), tree, "F3X4")[0]["theta"]
+        high_middle = kfseq.weighted_mean_root_thetas(values(0.8), tree, "F3X4")[0]["theta"]
         self.assertNotEqual(low_middle, high_middle)
 
     def test_internal_node_names_are_unique(self):
@@ -149,9 +136,7 @@ class TestKFToolsRegressions(unittest.TestCase):
             plt.close(ax.figure)
 
     def test_regressions_accept_non_identifier_column_names(self):
-        data = pd.DataFrame(
-            {"x value": [1.0, 2.0, 3.0, 4.0], "y value": [2.0, 3.5, 6.0, 7.0]}
-        )
+        data = pd.DataFrame({"x value": [1.0, 2.0, 3.0, 4.0], "y value": [2.0, 3.5, 6.0, 7.0]})
         density_ax = kfplot.density_scatter(
             "x value",
             "y value",
@@ -325,7 +310,3 @@ class TestKFToolsRegressions(unittest.TestCase):
             kfog.get_most_recent(data, 0, "og", "flag", pd.NA, "value"),
             10,
         )
-
-
-if __name__ == "__main__":
-    unittest.main()

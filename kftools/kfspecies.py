@@ -1,6 +1,6 @@
 import re
 from dataclasses import dataclass
-
+from typing import Any
 
 SUPPORTED_SPECIES_PARSERS = ("legacy", "taxonomic")
 _CANDIDATE_SPLIT_RE = re.compile(r"[|@:;,\s=]+")
@@ -48,11 +48,15 @@ _DISPLAY_RANKS = {
 
 @dataclass(frozen=True)
 class SpeciesParseResult:
+    """Canonical species label plus names suitable for display and taxonomy lookup."""
+
     species_label: str
     scientific_name: str | None = None
     taxonomy_query: str | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
+        if not isinstance(self.species_label, str):
+            raise ValueError("species_label must be a non-empty string")
         normalized_species_label = _normalize_species_label(self.species_label)
         if normalized_species_label in (None, ""):
             raise ValueError("species_label must be a non-empty string")
@@ -63,19 +67,29 @@ class SpeciesParseResult:
                 "scientific_name",
                 _scientific_name_from_species_label(normalized_species_label),
             )
+        elif (not isinstance(self.scientific_name, str)) or (self.scientific_name.strip() == ""):
+            raise ValueError("scientific_name must be a non-empty string when provided")
+        else:
+            object.__setattr__(self, "scientific_name", self.scientific_name.strip())
         if self.taxonomy_query is None:
             object.__setattr__(
                 self,
                 "taxonomy_query",
                 _taxonomy_query_from_species_label(normalized_species_label),
             )
+        elif (not isinstance(self.taxonomy_query, str)) or (self.taxonomy_query.strip() == ""):
+            raise ValueError("taxonomy_query must be a non-empty string when provided")
+        else:
+            object.__setattr__(self, "taxonomy_query", self.taxonomy_query.strip())
 
     @property
-    def genus(self):
+    def genus(self) -> str:
+        """Return the genus token from the canonical species label."""
         return self.species_label.split("_")[0]
 
     @property
-    def species(self):
+    def species(self) -> str:
+        """Return the species epithet, accounting for common qualifier tokens."""
         parts = self.species_label.split("_")
         if len(parts) < 2:
             return ""
@@ -302,18 +316,14 @@ def _coerce_parse_result(result):
         for key in ("species_label", "label", "scientific_name", "name"):
             if key in result:
                 return _parse_species_text(str(result[key]))
-        raise ValueError(
-            "parser result dict must contain genus/species or a species label"
-        )
+        raise ValueError("parser result dict must contain genus/species or a species label")
     if isinstance(result, (tuple, list)):
         if len(result) < 2:
             raise ValueError("parser result sequence must contain genus and species")
         return _parse_species_text(f"{result[0]}_{result[1]}")
     if isinstance(result, str):
         return _parse_species_text(result)
-    raise ValueError(
-        "parser result must be a string, sequence, dict, or SpeciesParseResult"
-    )
+    raise ValueError("parser result must be a string, sequence, dict, or SpeciesParseResult")
 
 
 def _parse_legacy(label):
@@ -324,10 +334,18 @@ def _parse_taxonomic(label):
     return _parse_taxonomic_text(label)
 
 
-def _build_regex_parser(pattern, group=None):
-    compiled_pattern = re.compile(pattern) if isinstance(pattern, str) else pattern
+def _compile_regex_pattern(pattern):
+    try:
+        compiled_pattern = re.compile(pattern) if isinstance(pattern, str) else pattern
+    except re.error as exc:
+        raise ValueError(f"invalid regex species parser pattern: {exc}") from exc
     if not hasattr(compiled_pattern, "search"):
         raise ValueError("regex species parser pattern must be a string or compiled regex")
+    return compiled_pattern
+
+
+def _build_regex_parser(pattern, group=None):
+    compiled_pattern = _compile_regex_pattern(pattern)
 
     def _parse_regex(label):
         match = compiled_pattern.search(label)
@@ -337,21 +355,15 @@ def _build_regex_parser(pattern, group=None):
             if isinstance(group, (tuple, list)):
                 if len(group) != 2:
                     raise ValueError("regex species parser group sequence must have length 2")
-                return _parse_species_text(
-                    f"{match.group(group[0])}_{match.group(group[1])}"
-                )
+                return _parse_species_text(f"{match.group(group[0])}_{match.group(group[1])}")
             return _parse_species_text(str(match.group(group)))
         group_dict = match.groupdict()
         if ("genus" in group_dict) and ("species" in group_dict):
-            return _parse_species_text(
-                "{}_{}".format(group_dict["genus"], group_dict["species"])
-            )
+            return _parse_species_text("{}_{}".format(group_dict["genus"], group_dict["species"]))
         if match.lastindex is None:
             return _parse_species_text(match.group(0))
         if match.lastindex >= 2:
-            return _parse_species_text(
-                f"{match.group(1)}_{match.group(2)}"
-            )
+            return _parse_species_text(f"{match.group(1)}_{match.group(2)}")
         return _parse_species_text(str(match.group(1)))
 
     return _parse_regex
@@ -374,11 +386,7 @@ def _coerce_dict_species_parser(species_parser):
     if dict_parser_mode in (None, "regex"):
         if "pattern" not in species_parser:
             raise ValueError("regex species parser dict must include a pattern")
-        group = (
-            species_parser["group"]
-            if "group" in species_parser
-            else species_parser.get("groups")
-        )
+        group = species_parser["group"] if "group" in species_parser else species_parser.get("groups")
         return _build_regex_parser(species_parser["pattern"], group=group)
     if dict_parser_mode == "legacy":
         return _parse_legacy
@@ -408,9 +416,7 @@ def _coerce_sequence_species_parser(species_parser):
         return _build_map_parser(species_parser[1])
     if (len(species_parser) == 1) and (parser_mode in SUPPORTED_SPECIES_PARSERS):
         return _coerce_species_parser(parser_mode)
-    raise ValueError(
-        "species parser sequence must start with 'regex' or 'map', or contain one parser name"
-    )
+    raise ValueError("species parser sequence must start with 'regex' or 'map', or contain one parser name")
 
 
 def _coerce_species_parser(species_parser):
@@ -430,12 +436,15 @@ def _coerce_species_parser(species_parser):
         return _coerce_dict_species_parser(species_parser)
     if isinstance(species_parser, (tuple, list)):
         return _coerce_sequence_species_parser(species_parser)
-    raise ValueError(
-        "species_parser must be None, a parser name, a regex, a parser config, or a callable"
-    )
+    raise ValueError("species_parser must be None, a parser name, a regex, a parser config, or a callable")
 
 
-def parse_species_label(label, species_parser=None, parser=None):
+def parse_species_label(
+    label: str,
+    species_parser: Any = None,
+    parser: Any = None,
+) -> SpeciesParseResult:
+    """Parse a leaf label with a built-in, regex, mapping, or callable parser."""
     _validate_species_label_input(label)
     if parser is not None:
         if species_parser is not None:

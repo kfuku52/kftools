@@ -1,8 +1,11 @@
-import numpy as np
 from collections.abc import Mapping
+from typing import Any
+
+import numpy as np
 
 
-def add_dict_key_prefix(d, prefix):
+def add_dict_key_prefix(d: Mapping[Any, Any], prefix: str) -> dict[str, Any]:
+    """Return a copy of a mapping with ``prefix`` prepended to every key."""
     if not isinstance(d, Mapping):
         raise ValueError("d must be a mapping type (e.g., dict)")
     if not isinstance(prefix, str):
@@ -10,7 +13,8 @@ def add_dict_key_prefix(d, prefix):
     return {f"{prefix}_{key}": value for key, value in d.items()}
 
 
-def rgb_to_hex(r, g, b):
+def rgb_to_hex(r: float, g: float, b: float) -> str:
+    """Convert normalized red, green, and blue channels to ``#RRGGBB``."""
     rgb = [r, g, b]
     for i, channel in enumerate(rgb):
         if isinstance(channel, bool) or (not isinstance(channel, (int, float, np.integer, np.floating))):
@@ -20,7 +24,7 @@ def rgb_to_hex(r, g, b):
         if (channel < 0) or (channel > 1):
             raise ValueError("RGB channel values must be between 0 and 1")
         rgb[i] = int(np.round(channel * 255, decimals=0))
-    return f'#{rgb[0]:02X}{rgb[1]:02X}{rgb[2]:02X}'
+    return f"#{rgb[0]:02X}{rgb[1]:02X}{rgb[2]:02X}"
 
 
 def _validate_rgb_color(color_values, color_name):
@@ -41,15 +45,20 @@ def _validate_rgb_color(color_values, color_name):
     return color_arr
 
 
-def get_rgb_gradient(ncol, col1, col2, colm=None):
+def get_rgb_gradient(
+    ncol: int,
+    col1: Any,
+    col2: Any,
+    colm: Any = None,
+) -> list[list[float]]:
+    """Interpolate ``ncol`` normalized RGB colors through a midpoint color."""
     if isinstance(ncol, bool) or (not isinstance(ncol, (int, np.integer))):
         raise ValueError("ncol must be an integer")
     if ncol <= 0:
         return []
     color_inputs = {"col1": col1, "col2": col2, "colm": [0.5, 0.5, 0.5] if colm is None else colm}
     col1, col2, colm = (
-        _validate_rgb_color(color_values, color_name)
-        for color_name, color_values in color_inputs.items()
+        _validate_rgb_color(color_values, color_name) for color_name, color_values in color_inputs.items()
     )
     if ncol == 1:
         return [col1.tolist()]

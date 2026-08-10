@@ -1,7 +1,9 @@
+from typing import Any
+
 import numpy as np
 
 
-def calc_complementarity(array1, array2):
+def calc_complementarity(array1: Any, array2: Any) -> float:
     """Return the mean relative difference between two non-negative profiles.
 
     The two profiles must have identical, non-zero lengths.  Requiring matching
@@ -23,7 +25,7 @@ def calc_complementarity(array1, array2):
         raise ValueError("array1 and array2 must contain non-negative values")
     max_values = np.maximum(arr1, arr2)
     abs_diff = np.abs(arr1 - arr2)
-    with np.errstate(divide='ignore', invalid='ignore'):
+    with np.errstate(divide="ignore", invalid="ignore"):
         rel_diff = np.divide(abs_diff, max_values, out=np.zeros_like(abs_diff), where=(max_values != 0))
     normalized_dif = rel_diff.mean()
     return float(normalized_dif)
@@ -62,7 +64,7 @@ def _prepare_tau_matrix(df, columns, unlog2, unPlus1):
     if not np.isfinite(x).all():
         raise ValueError("columns must contain finite numeric values")
     if unlog2:
-        with np.errstate(over='ignore', invalid='ignore'):
+        with np.errstate(over="ignore", invalid="ignore"):
             x = np.exp2(x)
         if unPlus1:
             x = x - 1
@@ -76,7 +78,7 @@ def _prepare_tau_matrix(df, columns, unlog2, unPlus1):
     return x
 
 
-def calc_tau(df, columns, unlog2=True, unPlus1=True):
+def calc_tau(df: Any, columns: Any, unlog2: bool = True, unPlus1: bool = True) -> np.ndarray:
     """Calculate the standard tissue-specificity tau index for each row.
 
     Tau is ``sum(1 - x_i / max(x)) / (n - 1)`` for two or more tissues.
@@ -91,7 +93,7 @@ def calc_tau(df, columns, unlog2=True, unPlus1=True):
     if x.shape[1] == 1:
         return np.zeros(x.shape[0], dtype=float)
     xmax = x.max(axis=1).reshape(x.shape[0], 1)
-    with np.errstate(divide='ignore', invalid='ignore'):
+    with np.errstate(divide="ignore", invalid="ignore"):
         ratio = np.divide(
             x,
             xmax,
