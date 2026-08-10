@@ -319,8 +319,16 @@ class TestKFOG(unittest.TestCase):
             self.assertIn("branch_id", out.columns)
             self.assertIn("tau", out.columns)
             self.assertIn("delta_tau", out.columns)
+            self.assertIn("sister_branch_ids", out.columns)
+            self.assertIn("delta_maxmu_parent", out.columns)
             self.assertIn("mu_t1", out.columns)
             self.assertEqual(out.shape[0], len(list(kfphylo.load_phylo_tree(tree_path, parser=1).traverse())))
+            names = kfog.nwk2table(tree_path, attr="name")
+            n1_label = names.loc[names["name"] == "N1", "branch_id"].iloc[0]
+            n1_row = out.loc[out["branch_id"] == n1_label].iloc[0]
+            self.assertEqual(len(n1_row["sister_branch_ids"]), 1)
+            self.assertAlmostEqual(n1_row["delta_maxmu"], n1_row["delta_maxmu_sisters"][0])
+            self.assertAlmostEqual(n1_row["mu_complementarity"], n1_row["mu_complementarity_sisters"][0])
         finally:
             os.unlink(regime_path)
             os.unlink(leaf_path)

@@ -196,11 +196,14 @@ class TestKFPhylo(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "tree_to root branch length must be a finite numeric value"):
             kfphylo.transfer_root(tree_to=tree_to, tree_from=tree_from)
 
-    def test_kfphylo_transfer_root_requires_bifurcating_root(self):
+    def test_kfphylo_transfer_root_accepts_trifurcating_source_root(self):
         tree_from = "(A:1,B:1,C:1);"
         tree_to = "((A:1,B:1):1,C:2);"
-        with self.assertRaisesRegex(ValueError, "bifurcating"):
-            kfphylo.transfer_root(tree_to=tree_to, tree_from=tree_from)
+        out = kfphylo.transfer_root(tree_to=tree_to, tree_from=tree_from)
+        self.assertEqual(len(out.children), 3)
+        self.assertEqual(
+            {frozenset(child.leaf_names()) for child in out.children}, {frozenset({name}) for name in "ABC"}
+        )
 
     def test_kfphylo_transfer_root_accepts_multifurcating_tree_to_root(self):
         tree_from = ete4.PhyloTree("((A:1,B:1):2,(C:1,D:1):2);", parser=1)
@@ -226,7 +229,7 @@ class TestKFPhylo(unittest.TestCase):
     def test_kfphylo_transfer_internal_node_names_requires_same_topology(self):
         tree_from = "((A:1,B:1):2,(C:1,D:1):2);"
         tree_to = "((A:1,C:1):2,(B:1,D:1):2);"
-        with self.assertRaisesRegex(ValueError, "RF distance"):
+        with self.assertRaisesRegex(ValueError, "topologies are different"):
             kfphylo.transfer_internal_node_names(tree_to=tree_to, tree_from=tree_from)
         with self.assertRaisesRegex(ValueError, "must be unique"):
             kfphylo.transfer_internal_node_names(

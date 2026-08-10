@@ -88,31 +88,71 @@ def get_tree_height(tree_file: Any) -> float:
     return max_root_to_tip_distance
 
 
+def _descendant_leafsets(tree):
+    leafsets = {}
+    for node in tree.traverse(strategy="postorder"):
+        if node.is_leaf:
+            leafsets[node] = frozenset((node.name,))
+        else:
+            leafsets[node] = frozenset().union(*(leafsets[child] for child in node.children))
+    return leafsets
+
+
+def _display_clade_signatures(signatures):
+    return [sorted(signature) for signature in sorted(signatures, key=lambda value: (len(value), sorted(value)))]
+
+
+def _internal_nodes_by_clade(tree, leafsets):
+    nodes_by_clade: dict[frozenset[str], list[Any]] = {}
+    for node in tree.traverse(strategy="postorder"):
+        if not node.is_leaf:
+            nodes_by_clade.setdefault(leafsets[node], []).append(node)
+    return nodes_by_clade
+
+
 def transfer_internal_node_names(tree_to: Any, tree_from: Any) -> Any:
     """Return a copy of ``tree_to`` with matching clade names from ``tree_from``.
 
-    Both inputs are left unchanged and must contain identical leaf sets.
+    Both inputs are left unchanged and must contain identical leaf sets and
+    rooted clade signatures.  Arbitrary internal node degrees are supported.
     """
     tree_to = copy.deepcopy(_load_tree_or_value_error(tree_to, parser=1, argument_name="tree_to"))
     tree_from = copy.deepcopy(_load_tree_or_value_error(tree_from, parser=1, argument_name="tree_from"))
     tree_to = add_numerical_node_labels(tree_to)
     tree_from = add_numerical_node_labels(tree_from)
-    try:
-        rf_dist = tree_to.robinson_foulds(tree_from)[0]
-    except Exception as exc:
-        raise ValueError("Failed to compare tree topologies in transfer_internal_node_names") from exc
-    if rf_dist != 0:
-        raise ValueError("tree topologies are different. RF distance = " + str(rf_dist))
-    name_by_label = {}
-    for node in tree_from.traverse():
-        if not node.is_leaf:
-            name_by_label[node.branch_id] = node.name
-    for node in tree_to.traverse():
-        if node.is_leaf:
-            continue
-        matched_name = name_by_label.get(node.branch_id)
-        if matched_name is not None:
-            node.name = matched_name
+    to_leafsets = _descendant_leafsets(tree_to)
+    from_leafsets = _descendant_leafsets(tree_from)
+    to_by_clade = _internal_nodes_by_clade(tree_to, to_leafsets)
+    from_by_clade = _internal_nodes_by_clade(tree_from, from_leafsets)
+    missing_clades = set(from_by_clade) - set(to_by_clade)
+    extra_clades = set(to_by_clade) - set(from_by_clade)
+    mismatch_clades = sorted(
+        (
+            clade
+            for clade in set(to_by_clade) & set(from_by_clade)
+            if len(to_by_clade[clade]) != len(from_by_clade[clade])
+        ),
+        key=lambda clade: (len(clade), sorted(clade)),
+    )
+    multiplicity_mismatches = [
+        {
+            "clade": sorted(clade),
+            "tree_to": len(to_by_clade[clade]),
+            "tree_from": len(from_by_clade[clade]),
+        }
+        for clade in mismatch_clades
+    ]
+    if missing_clades or extra_clades or multiplicity_mismatches:
+        raise ValueError(
+            "tree topologies are different; "
+            f"missing_in_tree_to={_display_clade_signatures(missing_clades)}, "
+            f"extra_in_tree_to={_display_clade_signatures(extra_clades)}, "
+            f"clade_multiplicity_mismatches={multiplicity_mismatches}"
+        )
+    for clade, to_nodes in to_by_clade.items():
+        for node_to, node_from in zip(to_nodes, from_by_clade[clade], strict=True):
+            if node_from.name is not None:
+                node_to.name = node_from.name
     return tree_to
 
 
@@ -224,6 +264,35 @@ def _choose_outgroup_split(tree_to, split_leafsets):
     return 0 if len(split_leafsets[0]) <= len(split_leafsets[1]) else 1
 
 
+def _root_partition(tree, leafsets=None):
+    leafsets = _descendant_leafsets(tree) if leafsets is None else leafsets
+    return frozenset(leafsets[child] for child in tree.children)
+
+
+def _incident_partition(node, leafsets, all_leaves):
+    components = [leafsets[child] for child in node.children]
+    if not node.is_root:
+        parent_side = all_leaves - leafsets[node]
+        if parent_side:
+            components.append(parent_side)
+    return frozenset(components)
+
+
+def _find_root_vertex(tree, expected_partition):
+    leafsets = _descendant_leafsets(tree)
+    all_leaves = leafsets[tree]
+    candidates = [
+        node for node in tree.traverse() if _incident_partition(node, leafsets, all_leaves) == expected_partition
+    ]
+    if len(candidates) != 1:
+        partition_display = _display_clade_signatures(expected_partition)
+        raise ValueError(
+            "Failed to transfer multifurcating root because tree_to does not contain a unique vertex "
+            f"with root partition: {partition_display}; candidates={len(candidates)}"
+        )
+    return candidates[0]
+
+
 def _validated_branch_distance(distance, error_prefix, allow_none=False):
     if (distance is None) and allow_none:
         return 0.0
@@ -255,16 +324,37 @@ def _reroot_to_split(tree_to, split_leafsets, outgroup_idx, verbose):
     tree_to.set_outgroup(outgroup_ancestor)
 
 
+def _reroot_to_vertex(tree_to, expected_partition, verbose):
+    root_dist = _validated_branch_distance(tree_to.dist, "tree_to root branch length", allow_none=True)
+    if root_dist != 0.0:
+        tree_to.dist = 0.0
+    root_vertex = _find_root_vertex(tree_to, expected_partition)
+    if verbose:
+        logger.info("multifurcating root partition: %s", _display_clade_signatures(expected_partition))
+    if not root_vertex.is_root:
+        try:
+            tree_to.set_outgroup(root_vertex)
+            tree_to.unroot()
+        except (AssertionError, ValueError) as exc:
+            raise ValueError("Failed to reroot tree_to at the multifurcating root vertex") from exc
+    if _root_partition(tree_to) != expected_partition:
+        raise ValueError("Failed to preserve the requested multifurcating root partition in tree_to")
+
+
 def _validated_subroot_distances(nodes, tree_name):
     return [_validated_branch_distance(node.dist, f"{tree_name} root child branch lengths") for node in nodes]
 
 
 def _transfer_subroot_distances(subroot_to, subroot_from):
-    total_to = sum(_validated_subroot_distances(subroot_to, "tree_to"))
-    total_from = sum(_validated_subroot_distances(subroot_from, "tree_from"))
+    distances_to = _validated_subroot_distances(subroot_to, "tree_to")
+    distances_from = _validated_subroot_distances(subroot_from, "tree_from")
+    total_to = sum(distances_to)
+    total_from = sum(distances_from)
     if total_from <= 0:
         return
-    dist_by_leafset = {frozenset(node.leaf_names()): node.dist for node in subroot_from}
+    dist_by_leafset = {
+        frozenset(node.leaf_names()): distance for node, distance in zip(subroot_from, distances_from, strict=True)
+    }
     for node_to in subroot_to:
         node_from_dist = dist_by_leafset.get(frozenset(node_to.leaf_names()))
         if node_from_dist is None:
@@ -278,7 +368,9 @@ def transfer_root(tree_to: Any, tree_from: Any, verbose: bool = False) -> Any:
     """Return a rerooted copy of ``tree_to`` using the root in ``tree_from``.
 
     Work is performed on a deep copy so a validation or rerooting failure never
-    leaves the caller's tree partially modified.
+    leaves the caller's tree partially modified.  Binary roots are transferred
+    onto a matching edge; roots with three or more children require a unique
+    existing vertex with the same incident leaf partition.
     """
     verbose = validate_boolean_flag(verbose, "verbose")
     tree_to = copy.deepcopy(_load_tree_or_value_error(tree_to, parser=1, argument_name="tree_to"))
@@ -286,20 +378,27 @@ def transfer_root(tree_to: Any, tree_from: Any, verbose: bool = False) -> Any:
     _validate_identical_tip_sets(tree_to, tree_from)
 
     from_children = tree_from.get_children()
-    if len(from_children) != 2:
-        raise ValueError(f"tree_from root must be bifurcating (2 children), got {len(from_children)}")
+    if len(from_children) < 2:
+        raise ValueError(f"tree_from root must contain at least 2 children, got {len(from_children)}")
 
-    split_leafsets = [set(node.leaf_names()) for node in from_children]
-    outgroup_idx = _choose_outgroup_split(tree_to, split_leafsets)
-    _reroot_to_split(tree_to, split_leafsets, outgroup_idx, verbose)
+    split_leafsets = [frozenset(node.leaf_names()) for node in from_children]
+    if len(from_children) == 2:
+        outgroup_idx = _choose_outgroup_split(tree_to, split_leafsets)
+        _reroot_to_split(tree_to, split_leafsets, outgroup_idx, verbose)
+    else:
+        _reroot_to_vertex(tree_to, frozenset(split_leafsets), verbose)
 
     subroot_to = tree_to.get_children()
-    if len(subroot_to) != 2:
+    if len(subroot_to) != len(from_children):
         raise ValueError(
-            "Failed to transfer root because rerooted tree_to root is not bifurcating "
-            f"(got {len(subroot_to)} children)."
+            "Failed to transfer root because rerooted tree_to root degree does not match tree_from "
+            f"(expected {len(from_children)}, got {len(subroot_to)} children)."
         )
-    _transfer_subroot_distances(subroot_to, from_children)
+    if len(from_children) == 2:
+        _transfer_subroot_distances(subroot_to, from_children)
+    else:
+        _validated_subroot_distances(subroot_to, "tree_to")
+        _validated_subroot_distances(from_children, "tree_from")
 
     for n_to in tree_to.traverse():
         if not n_to.name:

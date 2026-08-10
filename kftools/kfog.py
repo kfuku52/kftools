@@ -132,16 +132,24 @@ def _parse_float_locale(value):
     return float(mantissa + exponent_part)
 
 
+def _node_age_from_children(node, age_by_node, context):
+    if not node.children:
+        return 0.0
+    child_ages = [float(age_by_node[child] + child.dist) for child in node.children]
+    min_age, max_age = min(child_ages), max(child_ages)
+    if min_age != max_age:
+        raise ValueError(f"{context} contains inconsistent child-derived ages at node '{node.name}': {child_ages}")
+    return min_age
+
+
 def _nwk_age_values(tree, n_nodes):
     if not check_ultrametric(tree):
         raise ValueError("Tree must be ultrametric when age=True and attr='dist'")
     age_values = np.empty(n_nodes, dtype=float)
+    age_by_node: dict[object, float] = {}
     for node in tree.traverse(strategy="postorder"):
-        if node.is_leaf:
-            age_values[node.branch_id] = 0.0
-        else:
-            first_child = node.children[0]
-            age_values[node.branch_id] = age_values[first_child.branch_id] + first_child.dist
+        age_by_node[node] = 0.0 if node.is_leaf else _node_age_from_children(node, age_by_node, "Tree")
+        age_values[node.branch_id] = age_by_node[node]
     return age_values
 
 
@@ -173,7 +181,7 @@ def _nwk_relation_values(nodes, parent, sister):
             parent_values[label] = node.up.branch_id
         if sister_values is not None and (not node.is_root):
             assert sisters_values is not None
-            sister_labels = tuple(sister_node.branch_id for sister_node in node.get_sisters())
+            sister_labels = tuple(sorted(sister_node.branch_id for sister_node in node.get_sisters()))
             sisters_values[label] = sister_labels
             if sister_labels:
                 sister_values[label] = sister_labels[0]
@@ -300,7 +308,7 @@ def _species_tree_context(species_tree, label_by_leaf, is_ultrametric):
     up_age: dict[object, float] = {}
     if is_ultrametric:
         for node in species_nodes:
-            age[node] = 0.0 if node.is_leaf else age[node.children[0]] + node.children[0].dist
+            age[node] = 0.0 if node.is_leaf else _node_age_from_children(node, age, "species_tree")
         up_age = {node: np.inf if node.is_root else age[node.up] for node in species_nodes}
     return names, leaf_node, species_depth, age, up_age
 
@@ -340,8 +348,7 @@ def _gene_coverage_context(gene_tree, species_leaf_node, species_depth, is_ultra
 
         children = gn.children
         if is_ultrametric:
-            first_child = children[0]
-            gene_age[gn] = gene_age[first_child] + first_child.dist
+            gene_age[gn] = _node_age_from_children(gn, gene_age, "gene_tree")
         has_missing_species = any(gene_has_missing_species[child] for child in children)
         gene_has_missing_species[gn] = has_missing_species
         if has_missing_species:
@@ -527,15 +534,17 @@ def _ou_mu_by_regime(df_leaf, tissues, nodes):
 
 def _ou_node_arrays(nodes, mu_by_regime, num_tissues):
     num_nodes = len(nodes)
+    sister_branch_ids = np.empty(num_nodes, dtype=object)
+    sister_branch_ids.fill(())
     arrays = {
         "branch_id": np.empty(num_nodes, dtype=np.int64),
         "regime": np.empty(num_nodes, dtype=np.int64),
         "is_shift": np.empty(num_nodes, dtype=np.int64),
         "num_child_shift": np.full(num_nodes, np.nan, dtype=float),
         "parent_labels": np.empty(num_nodes, dtype=np.int64),
+        "sister_branch_ids": sister_branch_ids,
         "mu_values": np.empty((num_nodes, num_tissues), dtype=float),
     }
-    shift_pairs = []
     for row_index, node in enumerate(nodes):
         shift = int((not node.is_root) and (node.regime != node.up.regime))
         arrays["branch_id"][row_index] = node.branch_id
@@ -545,10 +554,9 @@ def _ou_node_arrays(nodes, mu_by_regime, num_tissues):
         arrays["mu_values"][row_index, :] = mu_by_regime[node.regime]
         if not node.is_leaf:
             arrays["num_child_shift"][row_index] = sum(int(node.regime != child.regime) for child in node.children)
-        sisters = node.get_sisters() if shift else []
-        if sisters:
-            shift_pairs.append((node.branch_id, sisters[0].branch_id))
-    return arrays, shift_pairs
+        if shift:
+            arrays["sister_branch_ids"][row_index] = tuple(sorted(sister.branch_id for sister in node.get_sisters()))
+    return arrays
 
 
 def _add_ou_tau_values(df, arrays, mu_columns):
@@ -563,23 +571,52 @@ def _add_ou_tau_values(df, arrays, mu_columns):
     df["tau"], df["delta_tau"] = tau_values, delta_tau
 
 
-def _add_ou_shift_values(df, arrays, shift_pairs):
+def _add_ou_shift_values(df, arrays):
     branch_id, mu_values = arrays["branch_id"], arrays["mu_values"]
     label_to_idx = np.empty(len(branch_id), dtype=np.int64)
     label_to_idx[branch_id] = np.arange(len(branch_id), dtype=np.int64)
     delta_maxmu = np.full(len(branch_id), np.nan, dtype=float)
     complementarity = np.full(len(branch_id), np.nan, dtype=float)
+    delta_maxmu_parent = np.full(len(branch_id), np.nan, dtype=float)
+    complementarity_parent = np.full(len(branch_id), np.nan, dtype=float)
+    delta_maxmu_sisters = np.empty(len(branch_id), dtype=object)
+    delta_maxmu_sisters.fill(())
+    complementarity_sisters = np.empty(len(branch_id), dtype=object)
+    complementarity_sisters.fill(())
     max_mu = mu_values.max(axis=1)
     unlogged_mu = np.clip(np.exp2(mu_values) - 1, a_min=0, a_max=None)
-    for label, sister_label in shift_pairs:
-        index, sister_index = label_to_idx[label], label_to_idx[sister_label]
-        delta_maxmu[index] = float(max_mu[index] - max_mu[sister_index])
-        complementarity[index] = calc_complementarity(unlogged_mu[index], unlogged_mu[sister_index])
+    for index in np.flatnonzero(arrays["is_shift"]):
+        sister_labels = arrays["sister_branch_ids"][index]
+        sister_indices = [label_to_idx[label] for label in sister_labels]
+        sister_deltas = tuple(float(max_mu[index] - max_mu[sister_index]) for sister_index in sister_indices)
+        sister_complementarities = tuple(
+            calc_complementarity(unlogged_mu[index], unlogged_mu[sister_index]) for sister_index in sister_indices
+        )
+        delta_maxmu_sisters[index] = sister_deltas
+        complementarity_sisters[index] = sister_complementarities
+        if len(sister_indices) == 1:
+            delta_maxmu[index] = sister_deltas[0]
+            complementarity[index] = sister_complementarities[0]
+
+        parent_label = arrays["parent_labels"][index]
+        if parent_label != -1:
+            parent_index = label_to_idx[parent_label]
+            delta_maxmu_parent[index] = float(max_mu[index] - max_mu[parent_index])
+            complementarity_parent[index] = calc_complementarity(unlogged_mu[index], unlogged_mu[parent_index])
     df["delta_maxmu"], df["mu_complementarity"] = delta_maxmu, complementarity
+    df["delta_maxmu_parent"] = delta_maxmu_parent
+    df["mu_complementarity_parent"] = complementarity_parent
+    df["delta_maxmu_sisters"] = delta_maxmu_sisters
+    df["mu_complementarity_sisters"] = complementarity_sisters
 
 
 def ou2table(regime_file: Any, leaf_file: Any, input_tree_file: Any) -> pd.DataFrame:
-    """Combine OU regime, leaf-parameter, and tree files into a node table."""
+    """Combine OU regime, leaf-parameter, and tree files into a node table.
+
+    Shift rows contain lossless, branch-ID-sorted sister comparisons.  The
+    legacy scalar sister metrics remain populated only when exactly one sister
+    exists; parent comparisons are emitted separately.
+    """
     regime_file = coerce_path_argument(regime_file, "regime_file")
     leaf_file = coerce_path_argument(leaf_file, "leaf_file")
     input_tree_file = coerce_path_argument(input_tree_file, "input_tree_file")
@@ -592,16 +629,28 @@ def ou2table(regime_file: Any, leaf_file: Any, input_tree_file: Any) -> pd.DataF
     nodes = list(tree.traverse())
     cn1 = ["branch_id", "regime", "is_shift", "num_child_shift"]
     cn2 = ["tau", "delta_tau", "delta_maxmu", "mu_complementarity"]
+    cn_relationships = [
+        "sister_branch_ids",
+        "delta_maxmu_sisters",
+        "mu_complementarity_sisters",
+        "delta_maxmu_parent",
+        "mu_complementarity_parent",
+    ]
     cn3 = ["mu_" + tissue for tissue in tissues]
-    cn = cn1 + cn2 + cn3
+    cn = cn1 + cn2 + cn_relationships + cn3
     _assign_ou_regimes(tree, _ou_regime_map(nodes, df_regime))
     mu_by_regime = _ou_mu_by_regime(df_leaf, tissues, nodes)
-    arrays, shift_pairs = _ou_node_arrays(nodes, mu_by_regime, len(cn3))
-    df = pd.DataFrame({column: arrays[column] for column in ["branch_id", "regime", "is_shift", "num_child_shift"]})
+    arrays = _ou_node_arrays(nodes, mu_by_regime, len(cn3))
+    df = pd.DataFrame(
+        {
+            column: arrays[column]
+            for column in ["branch_id", "regime", "is_shift", "num_child_shift", "sister_branch_ids"]
+        }
+    )
     for col_idx, col in enumerate(cn3):
         df[col] = arrays["mu_values"][:, col_idx]
     _add_ou_tau_values(df, arrays, cn3)
-    _add_ou_shift_values(df, arrays, shift_pairs)
+    _add_ou_shift_values(df, arrays)
     return df.loc[:, cn]
 
 
@@ -683,11 +732,8 @@ def _misc_output_arrays(n_nodes):
 def _misc_sister_label(node):
     if node.up is None:
         return -999
-    siblings = node.up.children
-    if len(siblings) == 2:
-        return (siblings[1] if siblings[0] is node else siblings[0]).branch_id
-    sisters = node.get_sisters()
-    return sisters[0].branch_id if sisters else -999
+    sister_labels = sorted(sister.branch_id for sister in node.get_sisters())
+    return sister_labels[0] if sister_labels else -999
 
 
 def _fill_misc_node_row(arrays, row_idx, node, statistics):
@@ -699,14 +745,16 @@ def _fill_misc_node_row(arrays, row_idx, node, statistics):
     arrays["num_leaf"][row_idx] = leaf_counts[node]
     arrays["parent"][row_idx] = -999 if node.up is None else node.up.branch_id
     arrays["sister"][row_idx] = _misc_sister_label(node)
-    arrays["sisters"][row_idx] = tuple(sister.branch_id for sister in node.get_sisters())
-    arrays["children"][row_idx] = tuple(child.branch_id for child in node.children)
+    sister_labels = tuple(sorted(sister.branch_id for sister in node.get_sisters()))
+    child_labels = tuple(sorted(child.branch_id for child in node.children))
+    arrays["sisters"][row_idx] = sister_labels
+    arrays["children"][row_idx] = child_labels
     if node.is_leaf:
         return
-    if node.children:
-        arrays["child1"][row_idx] = node.children[0].branch_id
-    if len(node.children) >= 2:
-        arrays["child2"][row_idx] = node.children[1].branch_id
+    if child_labels:
+        arrays["child1"][row_idx] = child_labels[0]
+    if len(child_labels) >= 2:
+        arrays["child2"][row_idx] = child_labels[1]
     score = dup_scores.get(node, 0.0)
     arrays["dup_conf_score"][row_idx] = score
     arrays["so_event"][row_idx] = "D" if score > 0 else "S"
