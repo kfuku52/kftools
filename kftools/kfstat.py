@@ -1,12 +1,12 @@
 import math
 import numbers
-from typing import Any
 
 import numpy as np
 import scipy.stats as stats
+from numpy.typing import ArrayLike, NDArray
 
 
-def _validate_sample(sample, sample_name):
+def _validate_sample(sample: ArrayLike, sample_name: str) -> NDArray[np.float64]:
     try:
         arr = np.asarray(sample, dtype=float).reshape(-1)
     except (TypeError, ValueError) as exc:
@@ -56,8 +56,8 @@ def _bm_p_value(W, f_hat, ttype):
 
 
 def bm_test(
-    x: Any,
-    y: Any,
+    x: ArrayLike,
+    y: ArrayLike,
     ttype: int = 0,
     alpha: float = 0.05,
 ) -> tuple[float, float, float, float, float, float]:
@@ -120,7 +120,7 @@ def bm_test(
     return W, f_hat, p_value, Pest, C_l, C_h
 
 
-def brunner_munzel_test(x: Any, y: Any, alternative: str = "two_sided") -> tuple[float, float]:
+def brunner_munzel_test(x: ArrayLike, y: ArrayLike, alternative: str = "two_sided") -> tuple[float, float]:
     """Return the Brunner-Munzel statistic and approximate t-distribution p-value.
 
     Missing and non-finite observations are discarded. ``alternative`` accepts

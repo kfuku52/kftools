@@ -6,3 +6,4 @@ kftools.egg-info/
 .ruff_cache/
 build/
 dist/
+.venv/

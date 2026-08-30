@@ -1,15 +1,27 @@
-import copy
 import gzip
 import os
 import re
 import warnings
-from dataclasses import dataclass
-from typing import Any
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-from ._validation import coerce_path_argument, is_hashable, validate_boolean_flag
+from ._tables import (
+    MostRecentLookup as MostRecentLookup,
+)
+from ._tables import (
+    compute_delta as compute_delta,
+)
+from ._tables import (
+    get_most_recent as get_most_recent,
+)
+from ._tables import (
+    prepare_most_recent_lookup as prepare_most_recent_lookup,
+)
+from ._tree import copy_tree
+from ._typing import NotungRootStats, PathInput, RootStats, TreeSource
+from ._validation import coerce_path_argument, validate_boolean_flag
 from .kfexpression import calc_complementarity, calc_tau
 from .kfphylo import (
     add_numerical_node_labels,
@@ -17,7 +29,25 @@ from .kfphylo import (
     load_phylo_tree,
     taxonomic_annotation,
 )
-from .kfspecies import parse_species_label
+from .kfspecies import SpeciesParser, parse_species_label
+
+__all__ = [
+    "nwk2table",
+    "node_gene2species",
+    "ou2table",
+    "get_misc_node_statistics",
+    "compute_delta",
+    "get_notung_root_stats",
+    "get_notung_reconcil_stats",
+    "get_root_stats",
+    "get_aln_stats",
+    "get_iqtree_model_stats",
+    "regime2tree",
+    "get_dating_method",
+    "MostRecentLookup",
+    "prepare_most_recent_lookup",
+    "get_most_recent",
+]
 
 NOTUNG_OPT_ROOT_RE = re.compile(
     r"Number of optimal roots:\s*([0-9][0-9,]*)\s*out of\s*([0-9][0-9,]*)",
@@ -35,50 +65,6 @@ NOTUNG_TRANSFER_RE = re.compile(r"-\s*Transfers\s*:\s*([0-9][0-9,]*)", flags=re.
 NOTUNG_LOSS_RE = re.compile(r"-\s*Losses\s*:\s*([0-9][0-9,]*)", flags=re.IGNORECASE)
 NOTUNG_POLYTOMY_RE = re.compile(r"-\s*Polytomies\s*:\s*([0-9][0-9,]*)", flags=re.IGNORECASE)
 INT64_MAX = np.iinfo(np.int64).max
-
-
-def _validate_column_name(column_name, argument_name):
-    if not isinstance(column_name, str):
-        raise ValueError(f"{argument_name} must be a string column name")
-    if column_name.strip() == "":
-        raise ValueError(f"{argument_name} must not be an empty string")
-
-
-def _validate_hashable_series_values(series, argument_name):
-    non_missing_values = series.dropna().to_list()
-    unhashable_examples = []
-    for value in non_missing_values:
-        if not is_hashable(value):
-            unhashable_examples.append(str(value))
-            if len(unhashable_examples) >= 5:
-                break
-    if len(unhashable_examples) > 0:
-        raise ValueError(f"{argument_name} must contain hashable values; invalid examples: {unhashable_examples}")
-
-
-def _validate_non_missing_series_values(series, argument_name):
-    missing_mask = series.isna()
-    if missing_mask.any():
-        raise ValueError(f"{argument_name} must not contain missing values")
-
-
-def _is_missing_scalar(value):
-    """Return whether a scalar is missing without triggering pd.NA truthiness."""
-    missing = pd.isna(value)
-    return isinstance(missing, (bool, np.bool_)) and bool(missing)
-
-
-def _scalar_values_equal(left, right):
-    """Compare scalar values while treating two missing values as equal."""
-    left_missing = _is_missing_scalar(left)
-    right_missing = _is_missing_scalar(right)
-    if left_missing or right_missing:
-        return left_missing and right_missing
-    try:
-        comparison = left == right
-    except (TypeError, ValueError):
-        return False
-    return isinstance(comparison, (bool, np.bool_)) and bool(comparison)
 
 
 def _normalize_locale_mantissa(mantissa):
@@ -189,7 +175,7 @@ def _nwk_relation_values(nodes, parent, sister):
 
 
 def nwk2table(
-    tree: Any,
+    tree: TreeSource,
     attr: str = "",
     age: bool = False,
     parent: bool = False,
@@ -391,11 +377,11 @@ def _gene_species_rows(context, is_ultrametric):
 
 
 def node_gene2species(
-    gene_tree: Any,
-    species_tree: Any,
+    gene_tree: TreeSource,
+    species_tree: TreeSource,
     is_ultrametric: bool = False,
-    species_parser: Any = None,
-    parser: Any = None,
+    species_parser: SpeciesParser = None,
+    parser: SpeciesParser = None,
 ) -> pd.DataFrame:
     """Map each gene-tree node to its covered species-tree node."""
     is_ultrametric = validate_boolean_flag(is_ultrametric, "is_ultrametric")
@@ -403,7 +389,7 @@ def node_gene2species(
     gene_tree = _load_og_tree(gene_tree, "gene_tree")
     species_tree = _load_og_tree(species_tree, "species_tree")
     label_by_leaf, species_counts = _species_tree_labels(species_tree, species_parser)
-    gene_tree = add_numerical_node_labels(copy.deepcopy(gene_tree))
+    gene_tree = add_numerical_node_labels(copy_tree(gene_tree))
     _validate_gene_species_ultrametric(gene_tree, species_tree, is_ultrametric)
     _rename_gene_leaves(gene_tree, species_parser)
     missing_species = set(gene_tree.leaf_names()) - set(species_counts)
@@ -427,7 +413,9 @@ def node_gene2species(
 
 def _read_tsv(file, argument_name):
     try:
-        return pd.read_csv(file, sep="\t")
+        # Identifiers must survive numeric inference and pandas' NA vocabulary.
+        # Converters apply only to names; numeric columns keep normal NA parsing.
+        return pd.read_csv(file, sep="\t", converters={"node_name": str, "param": str})
     except (OSError, UnicodeDecodeError, pd.errors.ParserError, pd.errors.EmptyDataError) as exc:
         raise ValueError(f"Failed to read {argument_name} as UTF-8 tab-separated text: {file}") from exc
 
@@ -610,7 +598,7 @@ def _add_ou_shift_values(df, arrays):
     df["mu_complementarity_sisters"] = complementarity_sisters
 
 
-def ou2table(regime_file: Any, leaf_file: Any, input_tree_file: Any) -> pd.DataFrame:
+def ou2table(regime_file: PathInput, leaf_file: PathInput, input_tree_file: PathInput) -> pd.DataFrame:
     """Combine OU regime, leaf-parameter, and tree files into a node table.
 
     Shift rows contain lossless, branch-ID-sorted sister comparisons.  The
@@ -625,7 +613,7 @@ def ou2table(regime_file: Any, leaf_file: Any, input_tree_file: Any) -> pd.DataF
     df_regime = _read_tsv(regime_file, "regime_file")
     df_leaf = _read_tsv(leaf_file, "leaf_file")
     df_regime, df_leaf, tissues = _validated_ou_tables(df_regime, df_leaf)
-    tree = add_numerical_node_labels(load_phylo_tree(input_tree_file, parser=1))
+    tree = add_numerical_node_labels(load_phylo_tree(Path(input_tree_file), parser=1))
     nodes = list(tree.traverse())
     cn1 = ["branch_id", "regime", "is_shift", "num_child_shift"]
     cn2 = ["tau", "delta_tau", "delta_maxmu", "mu_complementarity"]
@@ -767,10 +755,10 @@ def _fill_misc_parent_events(arrays, nodes, dup_scores):
 
 
 def get_misc_node_statistics(
-    tree_file: Any,
+    tree_file: TreeSource,
     tax_annot: bool = False,
-    species_parser: Any = None,
-    parser: Any = None,
+    species_parser: SpeciesParser = None,
+    parser: SpeciesParser = None,
 ) -> pd.DataFrame:
     """Calculate descendant, event, taxonomy, and relationship statistics."""
     tax_annot = validate_boolean_flag(tax_annot, "tax_annot")
@@ -803,47 +791,10 @@ def get_misc_node_statistics(
     return pd.DataFrame(arrays, columns=columns)
 
 
-def compute_delta(df: Any, column: str) -> pd.DataFrame:
-    """Return a dataframe copy with child-minus-parent values for ``column``."""
-    if not hasattr(df, "columns"):
-        raise ValueError("compute_delta requires a dataframe-like input with columns")
-    _validate_column_name(column, "column")
-    required_columns = {"branch_id", "parent", column}
-    missing_columns = sorted(required_columns - set(df.columns))
-    if len(missing_columns) > 0:
-        raise ValueError(f"compute_delta requires columns: {missing_columns}")
-    out = df.copy()
-    _validate_non_missing_series_values(out["branch_id"], "compute_delta branch_id column")
-    _validate_hashable_series_values(out["branch_id"], "compute_delta branch_id column")
-    _validate_hashable_series_values(out["parent"], "compute_delta parent column")
-    if not out["branch_id"].is_unique:
-        raise ValueError("compute_delta requires unique branch_id values")
-    numeric_column = pd.to_numeric(out[column], errors="coerce")
-    invalid_numeric_mask = out[column].notna() & numeric_column.isna()
-    if invalid_numeric_mask.any():
-        invalid_values = sorted(set(out.loc[invalid_numeric_mask, column].astype(str)))
-        raise ValueError(
-            f"compute_delta requires numeric values in column '{column}'; invalid values: {invalid_values}"
-        )
-    non_finite_mask = numeric_column.notna() & (~np.isfinite(numeric_column.to_numpy(dtype=float, copy=False)))
-    if non_finite_mask.any():
-        invalid_values = sorted(set(out.loc[non_finite_mask, column].astype(str)))
-        raise ValueError(
-            f"compute_delta requires finite numeric values in column '{column}'; invalid values: {invalid_values}"
-        )
-    out[column] = numeric_column
-    parent_column = f"parent_{column}"
-    value_by_label = out.set_index("branch_id")[column]
-    out[parent_column] = out["parent"].map(value_by_label)
-    out[f"delta_{column}"] = out[column] - out[parent_column]
-    out = out.drop(parent_column, axis=1)
-    return out
-
-
-def get_notung_root_stats(file: Any) -> dict[str, Any]:
+def get_notung_root_stats(file: PathInput) -> NotungRootStats:
     """Parse optimal-root counts and root scores from a Notung log."""
     file = coerce_path_argument(file, "file")
-    out = {}
+    out: NotungRootStats = {}
     try:
         with open(file) as f:
             for line in f:
@@ -864,7 +815,7 @@ def get_notung_root_stats(file: Any) -> dict[str, Any]:
     return out
 
 
-def get_notung_reconcil_stats(file: Any) -> dict[str, int]:
+def get_notung_reconcil_stats(file: PathInput) -> dict[str, int]:
     """Parse reconciliation event counts from a Notung log."""
     file = coerce_path_argument(file, "file")
     out = {}
@@ -887,10 +838,10 @@ def get_notung_reconcil_stats(file: Any) -> dict[str, int]:
     return out
 
 
-def get_root_stats(file: Any) -> dict[str, Any]:
+def get_root_stats(file: PathInput) -> RootStats:
     """Parse rooting method and rho-peak counts from a rooting log."""
     file = coerce_path_argument(file, "file")
-    out: dict[str, object] = {}
+    out: RootStats = {}
     try:
         with open(file) as f:
             for line in f:
@@ -915,7 +866,7 @@ def get_root_stats(file: Any) -> dict[str, Any]:
     return out
 
 
-def get_aln_stats(file: Any) -> dict[str, int]:
+def get_aln_stats(file: PathInput) -> dict[str, int]:
     """Return aligned-site, sequence-count, and ungapped-length FASTA stats."""
     file = coerce_path_argument(file, "file")
     out = {}
@@ -965,7 +916,7 @@ def get_aln_stats(file: Any) -> dict[str, int]:
     return out
 
 
-def get_iqtree_model_stats(file: Any) -> dict[str, str]:
+def get_iqtree_model_stats(file: PathInput) -> dict[str, str]:
     """Parse best AIC, AICc, and BIC model names from a gzipped IQ-TREE log."""
     out = {}
     file = coerce_path_argument(file, "file")
@@ -1023,7 +974,7 @@ def _add_regime_gamma_values(out, traits):
         out[f"gamma_{trait}"] = sigma_value / (2 * alpha_value)
 
 
-def regime2tree(file: Any) -> dict[str, Any]:
+def regime2tree(file: PathInput) -> dict[str, object]:
     """Summarize a tab-separated OU regime parameter table."""
     file = coerce_path_argument(file, "file")
     try:
@@ -1048,7 +999,7 @@ def regime2tree(file: Any) -> dict[str, Any]:
     return out
 
 
-def get_dating_method(file: Any) -> str:
+def get_dating_method(file: PathInput) -> str:
     """Read a dating-method file as one newline-free string."""
     file = coerce_path_argument(file, "file")
     try:
@@ -1056,120 +1007,3 @@ def get_dating_method(file: Any) -> str:
             return f.read().replace("\n", "")
     except (OSError, UnicodeDecodeError) as exc:
         raise ValueError(f"Failed to read file: {file}") from exc
-
-
-def _validate_hashable_scalar(value, message):
-    try:
-        hash(value)
-    except TypeError as exc:
-        raise ValueError(message) from exc
-
-
-def _most_recent_table(b, og, target_col, return_col, og_col):
-    required_columns = {"branch_id", "parent", target_col, return_col, og_col}
-    missing_columns = sorted(required_columns - set(b.columns))
-    if len(missing_columns) > 0:
-        raise ValueError(f"get_most_recent requires columns: {missing_columns}")
-    b_og = b.loc[b[og_col] == og, ["branch_id", "parent", target_col, return_col]]
-    _validate_non_missing_series_values(b_og["branch_id"], "get_most_recent branch_id column")
-    _validate_hashable_series_values(b_og["branch_id"], "get_most_recent branch_id column")
-    _validate_hashable_series_values(b_og["parent"], "get_most_recent parent column")
-    return b_og.drop_duplicates(subset="branch_id", keep="first").set_index("branch_id", drop=False)
-
-
-def _walk_most_recent(b_og, nl, target_col, target_value, return_col):
-    current_nl = nl
-    visited_nl = set()
-    while True:
-        if current_nl in visited_nl:
-            return np.nan
-        if current_nl not in b_og.index:
-            return np.nan
-        visited_nl.add(current_nl)
-        current_value = b_og.at[current_nl, target_col]
-        if _scalar_values_equal(current_value, target_value):
-            return b_og.at[current_nl, return_col]
-        current_parent = b_og.at[current_nl, "parent"]
-        if pd.isna(current_parent):
-            return np.nan
-        current_nl = current_parent
-
-
-@dataclass(frozen=True)
-class MostRecentLookup:
-    """Prepared orthogroup tables for repeated nearest-ancestor lookups."""
-
-    target_col: str
-    return_col: str
-    og_col: str
-    tables: dict[object, pd.DataFrame]
-
-    def find(self, nl: Any, og: Any, target_value: Any) -> Any:
-        """Return the nearest matching ancestor without rebuilding table indexes."""
-        _validate_hashable_scalar(nl, "nl must be a hashable scalar branch_id value")
-        _validate_hashable_scalar(og, "og must be a hashable value comparable to the orthogroup column")
-        b_og = self.tables.get(og)
-        if b_og is None or (nl not in b_og.index):
-            return np.nan
-        return _walk_most_recent(b_og, nl, self.target_col, target_value, self.return_col)
-
-
-def prepare_most_recent_lookup(
-    b: Any,
-    target_col: str,
-    return_col: str,
-    og_col: str = "orthogroup",
-) -> MostRecentLookup:
-    """Prepare indexes once for repeated :func:`get_most_recent` operations."""
-    if not hasattr(b, "columns"):
-        raise ValueError("prepare_most_recent_lookup requires a dataframe-like input with columns")
-    _validate_column_name(target_col, "target_col")
-    _validate_column_name(return_col, "return_col")
-    _validate_column_name(og_col, "og_col")
-    required_columns = {"branch_id", "parent", target_col, return_col, og_col}
-    missing_columns = sorted(required_columns - set(b.columns))
-    if missing_columns:
-        raise ValueError(f"prepare_most_recent_lookup requires columns: {missing_columns}")
-
-    columns = ["branch_id", "parent", target_col, return_col, og_col]
-    prepared_source = b.loc[:, columns]
-    _validate_non_missing_series_values(prepared_source["branch_id"], "prepare_most_recent_lookup branch_id column")
-    _validate_hashable_series_values(prepared_source["branch_id"], "prepare_most_recent_lookup branch_id column")
-    _validate_hashable_series_values(prepared_source["parent"], "prepare_most_recent_lookup parent column")
-    _validate_hashable_series_values(prepared_source[og_col], "prepare_most_recent_lookup orthogroup column")
-
-    tables = {}
-    for og_value, group in prepared_source.dropna(subset=[og_col]).groupby(og_col, sort=False):
-        tables[og_value] = (
-            group.loc[:, ["branch_id", "parent", target_col, return_col]]
-            .drop_duplicates(subset="branch_id", keep="first")
-            .set_index("branch_id", drop=False)
-        )
-    return MostRecentLookup(target_col, return_col, og_col, tables)
-
-
-def get_most_recent(
-    b: Any,
-    nl: Any,
-    og: Any,
-    target_col: str,
-    target_value: Any,
-    return_col: str,
-    og_col: str = "orthogroup",
-) -> Any:
-    """Return the nearest node value on the nl->root path matching a target state.
-
-    If the path cannot be followed safely (missing nodes, missing parent, or cycles),
-    this function returns np.nan.
-    """
-    if not hasattr(b, "columns"):
-        raise ValueError("get_most_recent requires a dataframe-like input with columns")
-    _validate_column_name(target_col, "target_col")
-    _validate_column_name(return_col, "return_col")
-    _validate_column_name(og_col, "og_col")
-    _validate_hashable_scalar(nl, "nl must be a hashable scalar branch_id value")
-    _validate_hashable_scalar(og, "og must be a hashable value comparable to the orthogroup column")
-    b_og = _most_recent_table(b, og, target_col, return_col, og_col)
-    if b_og.empty or (nl not in b_og.index):
-        return np.nan
-    return _walk_most_recent(b_og, nl, target_col, target_value, return_col)

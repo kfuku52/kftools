@@ -1,10 +1,13 @@
 from collections.abc import Mapping
-from typing import Any
+from typing import TypeVar
 
 import numpy as np
+from numpy.typing import ArrayLike, NDArray
+
+ValueT = TypeVar("ValueT")
 
 
-def add_dict_key_prefix(d: Mapping[Any, Any], prefix: str) -> dict[str, Any]:
+def add_dict_key_prefix(d: Mapping[object, ValueT], prefix: str) -> dict[str, ValueT]:
     """Return a copy of a mapping with ``prefix`` prepended to every key."""
     if not isinstance(d, Mapping):
         raise ValueError("d must be a mapping type (e.g., dict)")
@@ -27,7 +30,7 @@ def rgb_to_hex(r: float, g: float, b: float) -> str:
     return f"#{rgb[0]:02X}{rgb[1]:02X}{rgb[2]:02X}"
 
 
-def _validate_rgb_color(color_values, color_name):
+def _validate_rgb_color(color_values: ArrayLike, color_name: str) -> NDArray[np.float64]:
     try:
         raw_color_arr = np.asarray(color_values, dtype=object).reshape(-1)
     except Exception as exc:
@@ -47,9 +50,9 @@ def _validate_rgb_color(color_values, color_name):
 
 def get_rgb_gradient(
     ncol: int,
-    col1: Any,
-    col2: Any,
-    colm: Any = None,
+    col1: ArrayLike,
+    col2: ArrayLike,
+    colm: ArrayLike | None = None,
 ) -> list[list[float]]:
     """Interpolate ``ncol`` normalized RGB colors through a midpoint color."""
     if isinstance(ncol, bool) or (not isinstance(ncol, (int, np.integer))):

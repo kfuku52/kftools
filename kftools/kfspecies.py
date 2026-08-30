@@ -1,6 +1,7 @@
 import re
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import TypeAlias, TypedDict
 
 SUPPORTED_SPECIES_PARSERS = ("legacy", "taxonomic")
 _CANDIDATE_SPLIT_RE = re.compile(r"[|@:;,\s=]+")
@@ -100,6 +101,24 @@ class SpeciesParseResult:
         return parts[1]
 
 
+ParseResult: TypeAlias = SpeciesParseResult | str | Sequence[str] | dict[str, str]
+
+
+class ParserConfig(TypedDict, total=False):
+    """Configuration accepted by the species parser's dictionary form."""
+
+    type: str
+    mode: str
+    name: str
+    pattern: str | re.Pattern[str]
+    group: str | int | Sequence[str | int]
+    groups: str | int | Sequence[str | int]
+    mapping: dict[str, ParseResult]
+
+
+SpeciesParser: TypeAlias = str | re.Pattern[str] | ParserConfig | Sequence[object] | Callable[[str], ParseResult] | None
+
+
 def _validate_species_label_input(label):
     if (not isinstance(label, str)) or (label.strip() == ""):
         raise ValueError("label must be a non-empty string")
@@ -129,7 +148,8 @@ def _normalize_rank_value(token):
 
 def _canonical_taxonomic_token(token):
     cleaned = str(token or "").strip()
-    lowered = cleaned.lower()
+    # Only normalize punctuation on recognized markers, never on taxon values.
+    lowered = cleaned.lower().removesuffix(".")
     if lowered in _GENUS_ONLY_PLACEHOLDERS:
         return "sp"
     if lowered in _PROXIMITY_QUALIFIERS:
@@ -441,8 +461,8 @@ def _coerce_species_parser(species_parser):
 
 def parse_species_label(
     label: str,
-    species_parser: Any = None,
-    parser: Any = None,
+    species_parser: SpeciesParser = None,
+    parser: SpeciesParser = None,
 ) -> SpeciesParseResult:
     """Parse a leaf label with a built-in, regex, mapping, or callable parser."""
     _validate_species_label_input(label)
@@ -450,5 +470,5 @@ def parse_species_label(
         if species_parser is not None:
             raise ValueError("Use only one of species_parser or parser")
         species_parser = parser
-    parser = _coerce_species_parser(species_parser)
-    return _coerce_parse_result(parser(label))
+    parse = _coerce_species_parser(species_parser)
+    return _coerce_parse_result(parse(label))

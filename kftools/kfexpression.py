@@ -1,9 +1,11 @@
-from typing import Any
+from collections.abc import Sequence
 
 import numpy as np
+import pandas as pd
+from numpy.typing import ArrayLike, NDArray
 
 
-def calc_complementarity(array1: Any, array2: Any) -> float:
+def calc_complementarity(array1: ArrayLike, array2: ArrayLike) -> float:
     """Return the mean relative difference between two non-negative profiles.
 
     The two profiles must have identical, non-zero lengths.  Requiring matching
@@ -78,7 +80,9 @@ def _prepare_tau_matrix(df, columns, unlog2, unPlus1):
     return x
 
 
-def calc_tau(df: Any, columns: Any, unlog2: bool = True, unPlus1: bool = True) -> np.ndarray:
+def calc_tau(
+    df: pd.DataFrame, columns: str | Sequence[str], unlog2: bool = True, unPlus1: bool = True
+) -> NDArray[np.float64]:
     """Calculate the standard tissue-specificity tau index for each row.
 
     Tau is ``sum(1 - x_i / max(x)) / (n - 1)`` for two or more tissues.

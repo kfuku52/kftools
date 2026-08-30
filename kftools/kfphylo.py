@@ -1,6 +1,6 @@
-import copy
 import logging
 import os
+import stat
 import warnings
 from collections import Counter
 from pathlib import Path
@@ -9,8 +9,10 @@ from typing import Any
 import ete4
 import numpy as np
 
+from ._tree import copy_tree
+from ._typing import TreeSource
 from ._validation import validate_boolean_flag
-from .kfspecies import parse_species_label
+from .kfspecies import SpeciesParser, parse_species_label
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +25,8 @@ def _load_tree_or_value_error(tree_source, parser=1, argument_name="tree_source"
 
 
 def _read_newick_source(tree_source):
-    if isinstance(tree_source, os.PathLike):
+    is_path = isinstance(tree_source, os.PathLike)
+    if is_path:
         try:
             tree_source = os.fspath(tree_source)
         except TypeError as exc:
@@ -32,13 +35,25 @@ def _read_newick_source(tree_source):
         raise TypeError("tree_source must be a Newick string, path, or ete4.PhyloTree instance")
     if tree_source.strip() == "":
         raise ValueError("tree_source must not be an empty string")
-    tree_path = Path(tree_source)
-    if not tree_path.exists():
+    # Newick strings can far exceed filesystem component/path length limits.
+    # An explicit Path always means a file, even if its name contains Newick.
+    if not is_path and tree_source.rstrip().endswith(";"):
         return tree_source, None
-    if not tree_path.is_file():
-        raise ValueError(f"Tree path exists but is not a file: {tree_path}")
+    return _read_tree_path(tree_source, is_path)
+
+
+def _read_tree_path(tree_source, is_path):
+    tree_path = Path(tree_source)
     try:
+        if not stat.S_ISREG(tree_path.stat().st_mode):
+            raise ValueError(f"Tree path exists but is not a file: {tree_path}")
         newick = tree_path.read_text()
+    except FileNotFoundError as exc:
+        if not is_path:
+            return tree_source, None
+        raise ValueError(f"Failed to read tree file: {tree_path}") from exc
+    except IsADirectoryError as exc:
+        raise ValueError(f"Tree path exists but is not a file: {tree_path}") from exc
     except (OSError, UnicodeDecodeError) as exc:
         raise ValueError(f"Failed to read tree file: {tree_path}") from exc
     if newick.strip() == "":
@@ -46,7 +61,7 @@ def _read_newick_source(tree_source):
     return newick, tree_path
 
 
-def load_phylo_tree(tree_source: Any, parser: int = 1) -> Any:
+def load_phylo_tree(tree_source: TreeSource, parser: int = 1) -> ete4.PhyloTree:
     """Load a Newick string or path as an ETE tree, or return a supplied tree."""
     if isinstance(tree_source, ete4.PhyloTree):
         return tree_source
@@ -61,7 +76,7 @@ def load_phylo_tree(tree_source: Any, parser: int = 1) -> Any:
         raise ValueError("tree_source is neither a readable tree file path nor a valid Newick string") from exc
 
 
-def get_tree_height(tree_file: Any) -> float:
+def get_tree_height(tree_file: TreeSource) -> float:
     """Return the maximum root-to-tip branch length in a phylogenetic tree."""
     tree = _load_tree_or_value_error(tree_file, parser=1, argument_name="tree_file")
     leaves = list(tree.leaves())
@@ -110,14 +125,14 @@ def _internal_nodes_by_clade(tree, leafsets):
     return nodes_by_clade
 
 
-def transfer_internal_node_names(tree_to: Any, tree_from: Any) -> Any:
+def transfer_internal_node_names(tree_to: TreeSource, tree_from: TreeSource) -> ete4.PhyloTree:
     """Return a copy of ``tree_to`` with matching clade names from ``tree_from``.
 
     Both inputs are left unchanged and must contain identical leaf sets and
     rooted clade signatures.  Arbitrary internal node degrees are supported.
     """
-    tree_to = copy.deepcopy(_load_tree_or_value_error(tree_to, parser=1, argument_name="tree_to"))
-    tree_from = copy.deepcopy(_load_tree_or_value_error(tree_from, parser=1, argument_name="tree_from"))
+    tree_to = copy_tree(_load_tree_or_value_error(tree_to, parser=1, argument_name="tree_to"))
+    tree_from = copy_tree(_load_tree_or_value_error(tree_from, parser=1, argument_name="tree_from"))
     tree_to = add_numerical_node_labels(tree_to)
     tree_from = add_numerical_node_labels(tree_from)
     to_leafsets = _descendant_leafsets(tree_to)
@@ -156,7 +171,7 @@ def transfer_internal_node_names(tree_to: Any, tree_from: Any) -> Any:
     return tree_to
 
 
-def fill_internal_node_names(tree: Any) -> Any:
+def fill_internal_node_names(tree: TreeSource) -> ete4.PhyloTree:
     """Assign deterministic descendant-based names to unnamed internal nodes."""
     tree = _load_tree_or_value_error(tree, parser=1, argument_name="tree")
     used_names = {node.name for node in tree.traverse() if isinstance(node.name, str) and node.name.strip() != ""}
@@ -175,7 +190,7 @@ def fill_internal_node_names(tree: Any) -> Any:
     return tree
 
 
-def add_numerical_node_labels(tree: Any) -> Any:
+def add_numerical_node_labels(tree: TreeSource) -> ete4.PhyloTree:
     """Assign deterministic `branch_id` values in a CSUBST-compatible manner.
 
     The ranking algorithm intentionally mirrors CSUBST's branch-ID assignment
@@ -364,7 +379,7 @@ def _transfer_subroot_distances(subroot_to, subroot_from):
         node_to.dist = (node_from_dist / total_from) * total_to
 
 
-def transfer_root(tree_to: Any, tree_from: Any, verbose: bool = False) -> Any:
+def transfer_root(tree_to: TreeSource, tree_from: TreeSource, verbose: bool = False) -> ete4.PhyloTree:
     """Return a rerooted copy of ``tree_to`` using the root in ``tree_from``.
 
     Work is performed on a deep copy so a validation or rerooting failure never
@@ -373,7 +388,7 @@ def transfer_root(tree_to: Any, tree_from: Any, verbose: bool = False) -> Any:
     existing vertex with the same incident leaf partition.
     """
     verbose = validate_boolean_flag(verbose, "verbose")
-    tree_to = copy.deepcopy(_load_tree_or_value_error(tree_to, parser=1, argument_name="tree_to"))
+    tree_to = copy_tree(_load_tree_or_value_error(tree_to, parser=1, argument_name="tree_to"))
     tree_from = _load_tree_or_value_error(tree_from, parser=1, argument_name="tree_from")
     _validate_identical_tip_sets(tree_to, tree_from)
 
@@ -446,7 +461,7 @@ def _root_to_tip_extrema(tree):
     return min_dist, max_dist, min_dist_leaf, max_dist_leaf
 
 
-def check_ultrametric(tree: Any, tol: float = 0, verbose: bool = False) -> bool:
+def check_ultrametric(tree: TreeSource, tol: float = 0, verbose: bool = False) -> bool:
     """Return whether root-to-tip distances agree within an absolute tolerance."""
     tree = _load_tree_or_value_error(tree, parser=1, argument_name="tree")
     tol = _validate_ultrametric_tolerance(tol)
@@ -513,7 +528,9 @@ def _assign_taxids(leaves, name2id):
         leaf.taxid = taxids[0]
 
 
-def taxonomic_annotation(tree: Any, species_parser: Any = None, parser: Any = None) -> Any:
+def taxonomic_annotation(
+    tree: TreeSource, species_parser: SpeciesParser = None, parser: SpeciesParser = None
+) -> ete4.PhyloTree:
     """Annotate a tree with ETE NCBI taxonomy using parsed leaf species labels."""
     if parser is not None:
         if species_parser is not None:

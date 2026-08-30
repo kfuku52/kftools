@@ -9,6 +9,27 @@ from kftools import kfphylo, kfseq, kfspecies
 
 
 class TestKFSpecies(unittest.TestCase):
+    def test_taxonomic_punctuation_and_scientific_name_round_trips(self):
+        labels = [
+            "Quercus_cf_robur",
+            "Quercus_aff_robur",
+            "Quercus_nr_robur",
+            "Bacillus_subtilis_subsp_168",
+            "Brassica_oleracea_var_capitata",
+            "Acer_palmatum_forma_atropurpureum",
+            "Amoeba_sp_JD1",
+            "Bacillus_subtilis_strain_168.1",
+        ]
+        for label in labels:
+            with self.subTest(label=label):
+                parsed = kfspecies.parse_species_label(label, species_parser="taxonomic")
+                reparsed = kfspecies.parse_species_label(parsed.scientific_name, species_parser="taxonomic")
+                self.assertEqual(parsed, reparsed)
+        for marker in ["ssp.", "subspecies.", "SUBSP."]:
+            with self.subTest(marker=marker):
+                result = kfspecies.parse_species_label(f"Bacillus subtilis {marker} 168", species_parser="taxonomic")
+                self.assertEqual(result.species_label, "Bacillus_subtilis_subsp_168")
+
     def test_kfspecies_taxonomic_parser_supports_natural_order_labels(self):
         proximity = kfspecies.parse_species_label(
             "Dictyostelium_discoideum_cf_gene1",

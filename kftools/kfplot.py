@@ -1,16 +1,34 @@
-import warnings
+from __future__ import annotations
+
+from collections.abc import Hashable, Mapping, Sequence
 from decimal import Decimal
-from typing import Any
+from typing import TYPE_CHECKING, TypeAlias
 
 import matplotlib.pyplot
 import numpy as np
 import pandas as pd
 import scipy.stats as stats
+from matplotlib.axes import Axes
+from matplotlib.colors import Colormap
+from matplotlib.image import AxesImage
+from numpy.typing import ArrayLike, NDArray
 from pandas.api.types import is_scalar
 
+from ._regression import fit_annotation_model
 from ._validation import is_hashable, validate_boolean_flag
 
-_DEFAULT_TEXTXY = object()
+if TYPE_CHECKING:
+    from statsmodels.genmod.families.family import Family
+
+Color: TypeAlias = str | tuple[float, float, float] | tuple[float, float, float, float] | NDArray[np.generic]
+Palette: TypeAlias = str | Sequence[Color] | NDArray[np.generic] | None
+
+
+class _DefaultTextXY:
+    pass
+
+
+_DEFAULT_TEXTXY = _DefaultTextXY()
 
 
 def _pearsonr_fast(xval, yval):
@@ -70,7 +88,7 @@ def _coerce_numeric_columns(data, columns, argument_name):
             raise ValueError(
                 f"{argument_name} columns must contain numeric values; invalid values in '{col}': {invalid_values}"
             )
-        numeric_values = numeric_series.to_numpy(dtype=float, copy=False)
+        numeric_values = numeric_series.to_numpy(dtype=float, copy=False, na_value=np.nan)
         non_finite_mask = non_missing_original & (~np.isfinite(numeric_values))
         if non_finite_mask.any():
             invalid_values = sorted(set(data.loc[non_finite_mask, col].astype(str)))
@@ -184,10 +202,6 @@ def _stacked_frames(x, y, data, x_is_list, y_is_list):
         "x": _coerce_numeric_columns(data, x, "x") if x_is_list else pd.DataFrame(data.loc[:, x]),
         "y": _coerce_numeric_columns(data, y, "y") if y_is_list else pd.DataFrame(data.loc[:, y]),
     }
-    if x_is_list:
-        dfs["x"] = dfs["x"].cumsum(axis=1)
-    if y_is_list:
-        dfs["y"] = dfs["y"].cumsum(axis=1)
     return dfs, pd.concat([dfs["x"], dfs["y"]], axis=1)
 
 
@@ -198,34 +212,43 @@ def _draw_stacked_bars(ax, x, y, colors, dfs, df, x_is_list):
     else:
         columns, category, draw = dfs["y"].columns, x, ax.bar
         category_argument = "x"
-    grouped = df.groupby(category, sort=False)[list(columns)].mean()
-    for i in reversed(range(len(columns))):
-        value_column = columns[i]
-        grouped_values = grouped[value_column].dropna()
+    grouped = df.groupby(category, sort=False, observed=True)[list(columns)].mean().dropna(how="all")
+    labels = _normalize_plot_category_labels(grouped.index, argument_name=category_argument)
+    positive, negative = np.zeros(len(grouped)), np.zeros(len(grouped))
+    for i, value_column in enumerate(columns):
+        values = grouped[value_column].fillna(0).to_numpy(dtype=float)
+        offset = np.where(values >= 0, positive, negative)
         draw(
-            _normalize_plot_category_labels(grouped_values.index, argument_name=category_argument),
-            grouped_values.values,
+            labels,
+            values,
+            **{"left" if x_is_list else "bottom": offset},
             color=_resolve_series_color(colors, i),
             linewidth=0,
         )
+        positive += np.maximum(values, 0)
+        negative += np.minimum(values, 0)
 
 
-def stacked_barplot(x: Any, y: Any, data: Any, colors: Any, ax: Any) -> Any:
-    """Draw horizontally or vertically stacked means grouped by a category."""
+def stacked_barplot(
+    x: str | list[str], y: str | list[str], data: pd.DataFrame, colors: Palette, ax: Axes | None
+) -> Axes:
+    """Stack component means by category, ignoring missing values per component.
+
+    Positive and negative components are stacked separately from zero.
+    """
     if not hasattr(data, "columns"):
         raise ValueError("data must be a pandas DataFrame-like object with columns")
     x_is_list, y_is_list = _validate_stacked_axes(x, y, data)
-    created_internal_ax = False
+    created_figure = None
     if ax is None:
-        _, ax = matplotlib.pyplot.subplots(nrows=1, ncols=1, figsize=(5, 5), sharex=False)
-        created_internal_ax = True
+        created_figure, ax = matplotlib.pyplot.subplots(nrows=1, ncols=1, figsize=(5, 5), sharex=False)
 
     try:
         dfs, combined = _stacked_frames(x, y, data, x_is_list, y_is_list)
         _draw_stacked_bars(ax, x, y, colors, dfs, combined, x_is_list)
     except Exception:
-        if created_internal_ax:
-            matplotlib.pyplot.close(ax.figure)
+        if created_figure is not None:
+            matplotlib.pyplot.close(created_figure)
         raise
     return ax
 
@@ -440,23 +463,23 @@ def _draw_density_scatter(ax, plot_data, labels, options, correlation_values, gl
 
 
 def density_scatter(
-    x: Any,
-    y: Any,
-    df: Any = None,
-    ax: Any = None,
+    x: ArrayLike,
+    y: ArrayLike,
+    df: pd.DataFrame | None = None,
+    ax: Axes | None = None,
     cor: bool = True,
     diag: bool = False,
-    reg_family: Any = None,
+    reg_family: Family | None = None,
     hue_log: bool = False,
     show_cor_p: bool = True,
-    plot_range: Any = "each",
+    plot_range: str | Sequence[float] = "each",
     return_ims: bool = False,
     vmin: float | None = None,
     vmax: float | None = None,
     cbar: bool = True,
-    cmap: Any = "jet",
+    cmap: str | Colormap = "jet",
     num_bin: int = 20,
-) -> Any:
+) -> Axes | AxesImage:
     """Draw a density-colored scatter plot with optional correlation and GLM."""
     cor, diag, hue_log, show_cor_p, return_ims, cbar, num_bin = _validate_density_options(
         cor, diag, hue_log, show_cor_p, return_ims, cbar, num_bin, vmin, vmax
@@ -473,10 +496,9 @@ def density_scatter(
     bounds = _density_plot_range(plot_range, xval, yval)
     xyrange, hh, xdat1, ydat1 = _density_histogram(xval, yval, bounds, num_bin, hue_log)
 
-    created_internal_ax = False
+    created_figure = None
     if ax is None:
-        _, ax = matplotlib.pyplot.subplots(nrows=1, ncols=1, figsize=(5, 5), sharex=False)
-        created_internal_ax = True
+        created_figure, ax = matplotlib.pyplot.subplots(nrows=1, ncols=1, figsize=(5, 5), sharex=False)
 
     try:
         ims = _draw_density_scatter(
@@ -488,8 +510,8 @@ def density_scatter(
             glm_prediction,
         )
     except Exception:
-        if created_internal_ax:
-            matplotlib.pyplot.close(ax.figure)
+        if created_figure is not None:
+            matplotlib.pyplot.close(created_figure)
         raise
 
     return ims if return_ims else ax
@@ -568,7 +590,7 @@ def _hist_xlim(xlim, df, x):
     return values
 
 
-def _hist_bins(bins, xlim):
+def _hist_bins(bins, xlim) -> NDArray[np.float64]:
     if isinstance(bins, (int, np.integer)) and not isinstance(bins, bool):
         if bins <= 0:
             raise ValueError("bins must be a positive integer when scalar")
@@ -664,14 +686,14 @@ def _draw_hist_box_categories(ax, df, x, category, category_values, colors, bins
 def hist_boxplot(
     x: str = "",
     category: str = "",
-    df: Any = None,
-    colors: Any = None,
-    xlim: Any = None,
-    bins: Any = None,
+    df: pd.DataFrame | None = None,
+    colors: Palette | Mapping[Hashable, Color] = None,
+    xlim: Sequence[float] | None = None,
+    bins: ArrayLike | None = None,
     alpha: float = 0.9,
     box_step: float = 0.15,
-    ax: Any = None,
-) -> Any:
+    ax: Axes | None = None,
+) -> Axes:
     """Draw cumulative histograms and compact box plots by category."""
     df, alpha, box_step = _validate_hist_inputs(df, x, category, alpha, box_step)
     colors = {} if colors is None else colors
@@ -681,10 +703,9 @@ def hist_boxplot(
     xlim = _hist_xlim(xlim, df, x)
     bins = _hist_bins(bins, xlim)
     category_values = _hist_categories_and_colors(df, category, colors)
-    created_internal_ax = False
+    created_figure = None
     if ax is None:
-        _, ax = matplotlib.pyplot.subplots(nrows=1, ncols=1, figsize=(5, 5), sharex=False)
-        created_internal_ax = True
+        created_figure, ax = matplotlib.pyplot.subplots(nrows=1, ncols=1, figsize=(5, 5), sharex=False)
 
     try:
         yticks = _draw_hist_box_categories(ax, df, x, category, category_values, colors, bins, alpha, box_step)
@@ -696,8 +717,8 @@ def hist_boxplot(
         yticklabels = [y for y in yticks if y <= 1] + category_values
         ax.set_yticklabels(yticklabels)
     except Exception:
-        if created_internal_ax:
-            matplotlib.pyplot.close(ax.figure)
+        if created_figure is not None:
+            matplotlib.pyplot.close(created_figure)
         raise
     return ax
 
@@ -712,7 +733,7 @@ def _normalize_annotation_stats(stats):
             stats = list(stats)
         except TypeError as exc:
             raise ValueError("stats must be a string or a sequence of statistic names") from exc
-    allowed = {"N", "slope", "slope_p", "rsquared", "rsquared_p"}
+    allowed = {"N", "slope", "slope_p", "rsquared", "rsquared_adj", "rsquared_p"}
     invalid = [stat for stat in stats if (not isinstance(stat, str)) or (stat not in allowed)]
     if invalid:
         raise ValueError(f"stats contains unsupported entries: {invalid}")
@@ -737,7 +758,7 @@ def _annotation_text_coordinates(textxy):
     return values
 
 
-def _annotation_numeric_data(x, y, data):
+def _annotation_numeric_data(x, y, data) -> tuple[str, str, pd.DataFrame]:
     if data is None:
         data, x, y = pd.DataFrame({"X": x, "Y": y}), "X", "Y"
     elif not hasattr(data, "columns"):
@@ -760,91 +781,20 @@ def _annotation_numeric_data(x, y, data):
     return x, y, out.sort_values(x)
 
 
-def _fit_annotation_model(data, x, y, method, y_has_variation):
-    import statsmodels.api as sm
-
-    exog = sm.add_constant(data.loc[:, [x]], has_constant="add")
-    response = data.loc[:, y]
-    if method == "ols":
-        try:
-            return sm.OLS(response, exog).fit()
-        except Exception as exc:
-            raise ValueError("ols fit failed in ols_annotations") from exc
-    if method != "quantreg":
-        raise ValueError("method must be either 'ols' or 'quantreg'")
-    if not y_has_variation:
-        return None
-    try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", RuntimeWarning)
-            with np.errstate(divide="ignore", invalid="ignore", over="ignore", under="ignore"):
-                return sm.QuantReg(response, exog).fit(q=0.5)
-    except Exception:
-        return None
-
-
-def _result_value(result_values, key):
-    try:
-        value = float(result_values[key])
-    except (KeyError, TypeError, ValueError):
-        return np.nan
-    return value if np.isfinite(value) else np.nan
-
-
-def _ols_r_squared(result, y_has_variation):
-    if (float(result.df_resid) <= 0) or (not y_has_variation):
-        return np.nan, np.nan
-    with np.errstate(divide="ignore", invalid="ignore"):
-        values = (result.rsquared_adj, result.f_pvalue)
-    return tuple(_finite_result_scalar(value) for value in values)
-
-
-def _finite_result_scalar(value):
-    try:
-        value = float(value)
-    except (TypeError, ValueError):
-        return np.nan
-    return value if np.isfinite(value) else np.nan
-
-
-def _quantreg_r_squared(result):
-    with np.errstate(divide="ignore", invalid="ignore"):
-        value = getattr(result, "prsquared", np.nan)
-    try:
-        value = float(value)
-    except (TypeError, ValueError):
-        return np.nan
-    return value if np.isfinite(value) else np.nan
-
-
-def _annotation_statistics(result, x, method, requested_stats, y_has_variation):
-    values = {"slope": np.nan, "slope_p": np.nan, "rsquared": np.nan, "rsquared_p": np.nan}
-    if result is None:
-        return values
-    if {"slope", "slope_p"} & set(requested_stats):
-        values["slope"] = _result_value(result.params, x)
-        values["slope_p"] = _result_value(result.pvalues, x)
-    if not ({"rsquared", "rsquared_p"} & set(requested_stats)):
-        return values
-    if method == "ols":
-        values["rsquared"], values["rsquared_p"] = _ols_r_squared(result, y_has_variation)
-    else:
-        values["rsquared"] = _quantreg_r_squared(result)
-    return values
-
-
-def _annotation_text(stats, sample_size, values):
+def _annotation_text(stats, sample_size, values, method):
+    r_squared_label = "R2" if method == "ols" else "pseudo R2"
     formats = {
         "N": lambda: f"N = {sample_size:,}\n",
         "slope": lambda: f"slope = {Decimal(values['slope']):.2f}\n",
         "slope_p": lambda: f"P = {Decimal(values['slope_p']):.2E}\n",
-        "rsquared": lambda: f"R2 = {Decimal(values['rsquared']):.2f}\n",
+        "rsquared": lambda: f"{r_squared_label} = {Decimal(values['rsquared']):.2f}\n",
+        "rsquared_adj": lambda: f"adj. R2 = {Decimal(values['rsquared_adj']):.2f}\n",
         "rsquared_p": lambda: f"P = {Decimal(values['rsquared_p']):.2E}\n",
     }
     return "".join(formats[stat]() for stat in stats)
 
 
-def _draw_ols_annotation(ax, data, x, y_values, result, textxy, text, style):
+def _draw_ols_annotation(ax, data, x, predictions, textxy, text, style):
     color, font_size, textva, textha = style
     ax.text(
         textxy[0],
@@ -858,53 +808,51 @@ def _draw_ols_annotation(ax, data, x, y_values, result, textxy, text, style):
     )
     sample_size = data.shape[0]
     x_endpoints = data[x].to_numpy(copy=False)[[0, sample_size - 1]]
-    if result is None:
-        median = float(np.median(y_values))
-        y_endpoints = np.asarray([median, median], dtype=float)
-    else:
-        y_endpoints = np.asarray(result.predict(), dtype=float)[[0, sample_size - 1]]
+    y_endpoints = predictions[[0, sample_size - 1]]
     ax.plot(x_endpoints, y_endpoints, color=color)
 
 
 def ols_annotations(
-    x: str,
-    y: str,
-    data: Any = None,
-    ax: Any = None,
-    color: Any = "black",
+    x: ArrayLike,
+    y: ArrayLike,
+    data: pd.DataFrame | None = None,
+    ax: Axes | None = None,
+    color: Color = "black",
     font_size: float = 8,
-    textxy: Any = _DEFAULT_TEXTXY,
+    textxy: Sequence[float] | _DefaultTextXY = _DEFAULT_TEXTXY,
     textva: str = "top",
     textha: str = "left",
     method: str = "quantreg",
-    stats: Any = None,
-) -> Any:
-    """Fit a linear or quantile model and annotate its statistics on an axis."""
+    stats: str | Sequence[str] | None = None,
+) -> Axes:
+    """Fit OLS or median regression and annotate statistics on an axis.
+
+    ``rsquared`` is ordinary R2 for OLS and explicitly labelled pseudo R2 for
+    quantile regression. ``rsquared_adj`` is available only for OLS. Undefined
+    statistics (e.g. the slope for constant x) are displayed as NaN.
+    """
     stats = _normalize_annotation_stats(stats)
     textxy = _annotation_text_coordinates(textxy)
     x, y, data = _annotation_numeric_data(x, y, data)
-    y_values = data[y].to_numpy(copy=False)
-    y_has_variation = np.ptp(y_values) > 0
-    res = _fit_annotation_model(data, x, y, method, y_has_variation)
-    values = _annotation_statistics(res, x, method, stats, y_has_variation)
-    text = _annotation_text(stats, data.shape[0], values)
-    created_internal_ax = False
+    if method != "ols" and "rsquared_adj" in stats:
+        raise ValueError("rsquared_adj is only available for method='ols'")
+    fit = fit_annotation_model(data[x].to_numpy(dtype=float), data[y].to_numpy(dtype=float), method)
+    text = _annotation_text(stats, data.shape[0], fit.statistics, method)
+    created_figure = None
     if ax is None:
-        _, ax = matplotlib.pyplot.subplots(nrows=1, ncols=1, figsize=(5, 5), sharex=False)
-        created_internal_ax = True
+        created_figure, ax = matplotlib.pyplot.subplots(nrows=1, ncols=1, figsize=(5, 5), sharex=False)
     try:
         _draw_ols_annotation(
             ax,
             data,
             x,
-            y_values,
-            res,
+            fit.predictions,
             textxy,
             text,
             (color, font_size, textva, textha),
         )
     except Exception:
-        if created_internal_ax:
-            matplotlib.pyplot.close(ax.figure)
+        if created_figure is not None:
+            matplotlib.pyplot.close(created_figure)
         raise
     return ax

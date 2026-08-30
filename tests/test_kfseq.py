@@ -12,6 +12,19 @@ from kftools import kfseq
 
 
 class TestKFSeq(unittest.TestCase):
+    def test_unknown_nucleotide_keys_are_rejected_without_mutation(self):
+        for value in [4, -3, np.nan, "invalid"]:
+            with self.subTest(value=value):
+                frequencies = {"A": 1.0, "T": 1.0, "C": 1.0, "G": 1.0, "N": value}
+                original = frequencies.copy()
+                with self.assertRaisesRegex(ValueError, "unsupported keys"):
+                    kfseq.nuc_freq2theta([frequencies])
+                self.assertEqual(frequencies, original)
+        frequencies = {"A": 1.0, "T": 1.0, "C": 1.0, "G": 1.0}
+        result = kfseq.nuc_freq2theta([frequencies])
+        self.assertEqual(result, [{"theta": 0.5, "theta1": 0.5, "theta2": 0.5}])
+        self.assertEqual(set(frequencies.values()), {1.0})
+
     def test_kfseq(self):
         codon_freqs = {"AAA": 0.5, "TTT": 0.5}
         out = kfseq.codon2nuc_freqs(codon_freqs=codon_freqs, model="F3X4")

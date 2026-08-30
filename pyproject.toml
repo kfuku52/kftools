@@ -39,7 +39,8 @@ test = [
 ]
 quality = [
     "coverage[toml]>=7",
-    "mypy>=1.10",
+    "mypy>=1.19",
+    "pandas-stubs>=2.0",
     "ruff>=0.8",
 ]
 release = [
@@ -50,7 +51,8 @@ release = [
 dev = [
     "build>=1.2",
     "coverage[toml]>=7",
-    "mypy>=1.10",
+    "mypy>=1.19",
+    "pandas-stubs>=2.0",
     "pip-audit>=2.7",
     "pytest>=8",
     "ruff>=0.8",
@@ -99,13 +101,19 @@ select = ["B", "C4", "C90", "E4", "E7", "E9", "F", "I", "PERF", "SIM", "UP"]
 max-complexity = 10
 
 [tool.mypy]
-python_version = "3.10"
+# Type checks run on 3.14 so current NumPy/Matplotlib stubs remain visible.
+# Ruff and the runtime matrix independently enforce Python 3.10 compatibility.
+python_version = "3.14"
 check_untyped_defs = true
-ignore_missing_imports = true
-no_site_packages = true
 no_implicit_optional = true
 show_error_codes = true
 strict_equality = true
 warn_redundant_casts = true
 warn_unused_configs = true
 warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+# These upstream packages do not ship type information. Do not hide the
+# stubs supplied by NumPy, Matplotlib, or pandas-stubs.
+module = ["ete4.*", "scipy.*", "statsmodels.*"]
+ignore_missing_imports = true

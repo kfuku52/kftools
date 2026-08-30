@@ -1,0 +1,282 @@
+{
+  "before": [
+    {
+      "source": "838e74e (0.5.0)",
+      "python": "3.14.0",
+      "shape": "balanced",
+      "leaves": 1000,
+      "operation": "transfer_internal_node_names",
+      "median_seconds": 0.03408458293415606,
+      "seconds": [
+        0.04073400003835559,
+        0.03061220794916153,
+        0.030761458911001682,
+        0.034952542046085,
+        0.03408458293415606
+      ],
+      "peak_rss_mib": 130.0625,
+      "sha256": "3f710444c3284ab9d240fe3885c81f703da70467ebd6130e04430bd350ac6f52",
+      "error": null
+    },
+    {
+      "source": "838e74e (0.5.0)",
+      "python": "3.14.0",
+      "shape": "star",
+      "leaves": 1000,
+      "operation": "transfer_internal_node_names",
+      "median_seconds": 0.014330666977912188,
+      "seconds": [
+        0.023156292038038373,
+        0.013199416920542717,
+        0.015151041792705655,
+        0.014330666977912188,
+        0.013192250160500407
+      ],
+      "peak_rss_mib": 119.78125,
+      "sha256": "b4896a9d5a86c107fb9dec5b08d8b767c425fdf5cbb2157beb642be0cebfdef3",
+      "error": null
+    },
+    {
+      "source": "838e74e (0.5.0)",
+      "python": "3.14.0",
+      "shape": "comb",
+      "leaves": 50,
+      "operation": "transfer_internal_node_names",
+      "median_seconds": 0.001833458198234439,
+      "seconds": [
+        0.001833458198234439,
+        0.0020334580913186073,
+        0.0016465000808238983,
+        0.001749749993905425,
+        0.002142084063962102
+      ],
+      "peak_rss_mib": 115.5625,
+      "sha256": "d48b23e0dc1372edc75b7f69e2f409dc27414dbd26f8ba19ea840c2ae4af0b8f",
+      "error": null
+    },
+    {
+      "source": "838e74e (0.5.0)",
+      "python": "3.14.0",
+      "shape": "comb",
+      "leaves": 1000,
+      "operation": "transfer_internal_node_names",
+      "median_seconds": null,
+      "seconds": [],
+      "peak_rss_mib": 117.1875,
+      "sha256": null,
+      "error": "RecursionError"
+    },
+    {
+      "source": "838e74e (0.5.0)",
+      "python": "3.14.0",
+      "shape": "balanced",
+      "leaves": 1000,
+      "operation": "transfer_root",
+      "median_seconds": 0.017955832881852984,
+      "seconds": [
+        0.029681875137612224,
+        0.018388167023658752,
+        0.017955832881852984,
+        0.01749449991621077,
+        0.017436500173062086
+      ],
+      "peak_rss_mib": 120.75,
+      "sha256": "4c5f394aa5681c63f8cea4e945082f10f987aa4fb49c5b990689e333b8248122",
+      "error": null
+    },
+    {
+      "source": "838e74e (0.5.0)",
+      "python": "3.14.0",
+      "shape": "star",
+      "leaves": 1000,
+      "operation": "transfer_root",
+      "median_seconds": 0.016230166889727116,
+      "seconds": [
+        0.02800191706046462,
+        0.01609979197382927,
+        0.015957459108904004,
+        0.017141042044386268,
+        0.016230166889727116
+      ],
+      "peak_rss_mib": 112.515625,
+      "sha256": "00e6867da52530a2c04514b308d072781d805805ed1a724c4660a683c2575c45",
+      "error": null
+    },
+    {
+      "source": "838e74e (0.5.0)",
+      "python": "3.14.0",
+      "shape": "comb",
+      "leaves": 50,
+      "operation": "transfer_root",
+      "median_seconds": 0.0010234168730676174,
+      "seconds": [
+        0.0015375828370451927,
+        0.0010234168730676174,
+        0.0009994159918278456,
+        0.0014645829796791077,
+        0.0009888329077512026
+      ],
+      "peak_rss_mib": 116.046875,
+      "sha256": "aeafdd11903fa167544ecd6a305ae9b9c6de6b5018a23c4442d111478d336e1c",
+      "error": null
+    },
+    {
+      "source": "838e74e (0.5.0)",
+      "python": "3.14.0",
+      "shape": "comb",
+      "leaves": 1000,
+      "operation": "transfer_root",
+      "median_seconds": null,
+      "seconds": [],
+      "peak_rss_mib": 116.96875,
+      "sha256": null,
+      "error": "RecursionError"
+    }
+  ],
+  "after": [
+    {
+      "source": "0.6.0 working tree",
+      "python": "3.14.0",
+      "shape": "balanced",
+      "leaves": 1000,
+      "operation": "transfer_internal_node_names",
+      "median_seconds": 0.023828124860301614,
+      "seconds": [
+        0.030830208212137222,
+        0.022916417103260756,
+        0.023828124860301614,
+        0.022561500081792474,
+        0.03171979100443423
+      ],
+      "peak_rss_mib": 132.578125,
+      "sha256": "3f710444c3284ab9d240fe3885c81f703da70467ebd6130e04430bd350ac6f52",
+      "error": null
+    },
+    {
+      "source": "0.6.0 working tree",
+      "python": "3.14.0",
+      "shape": "star",
+      "leaves": 1000,
+      "operation": "transfer_internal_node_names",
+      "median_seconds": 0.008942791959270835,
+      "seconds": [
+        0.01786283403635025,
+        0.008728541899472475,
+        0.008515833178535104,
+        0.009183540940284729,
+        0.008942791959270835
+      ],
+      "peak_rss_mib": 121.828125,
+      "sha256": "b4896a9d5a86c107fb9dec5b08d8b767c425fdf5cbb2157beb642be0cebfdef3",
+      "error": null
+    },
+    {
+      "source": "0.6.0 working tree",
+      "python": "3.14.0",
+      "shape": "comb",
+      "leaves": 50,
+      "operation": "transfer_internal_node_names",
+      "median_seconds": 0.0011152499355375767,
+      "seconds": [
+        0.001223958097398281,
+        0.0011484159622341394,
+        0.0010202499106526375,
+        0.0011152499355375767,
+        0.0010053750593215227
+      ],
+      "peak_rss_mib": 115.34375,
+      "sha256": "d48b23e0dc1372edc75b7f69e2f409dc27414dbd26f8ba19ea840c2ae4af0b8f",
+      "error": null
+    },
+    {
+      "source": "0.6.0 working tree",
+      "python": "3.14.0",
+      "shape": "comb",
+      "leaves": 1000,
+      "operation": "transfer_internal_node_names",
+      "median_seconds": 0.06910716602578759,
+      "seconds": [
+        0.0780424999538809,
+        0.0689644580706954,
+        0.06910716602578759,
+        0.06669120793230832,
+        0.08728258404880762
+      ],
+      "peak_rss_mib": 204.296875,
+      "sha256": "02812bec8fec94f01819e7adbaaed039c38a4cf65d70fd814119a7d11decca90",
+      "error": null
+    },
+    {
+      "source": "0.6.0 working tree",
+      "python": "3.14.0",
+      "shape": "balanced",
+      "leaves": 1000,
+      "operation": "transfer_root",
+      "median_seconds": 0.013579125050455332,
+      "seconds": [
+        0.02730529196560383,
+        0.013857166981324553,
+        0.013579125050455332,
+        0.012959291925653815,
+        0.012692749965935946
+      ],
+      "peak_rss_mib": 121.15625,
+      "sha256": "4c5f394aa5681c63f8cea4e945082f10f987aa4fb49c5b990689e333b8248122",
+      "error": null
+    },
+    {
+      "source": "0.6.0 working tree",
+      "python": "3.14.0",
+      "shape": "star",
+      "leaves": 1000,
+      "operation": "transfer_root",
+      "median_seconds": 0.012525875121355057,
+      "seconds": [
+        0.01471229107119143,
+        0.018483332823961973,
+        0.012253249995410442,
+        0.012199166929349303,
+        0.012525875121355057
+      ],
+      "peak_rss_mib": 118.4375,
+      "sha256": "00e6867da52530a2c04514b308d072781d805805ed1a724c4660a683c2575c45",
+      "error": null
+    },
+    {
+      "source": "0.6.0 working tree",
+      "python": "3.14.0",
+      "shape": "comb",
+      "leaves": 50,
+      "operation": "transfer_root",
+      "median_seconds": 0.0006917500868439674,
+      "seconds": [
+        0.0009689999278634787,
+        0.000785832991823554,
+        0.0006917500868439674,
+        0.0006764589343219995,
+        0.0006812501233071089
+      ],
+      "peak_rss_mib": 115.65625,
+      "sha256": "aeafdd11903fa167544ecd6a305ae9b9c6de6b5018a23c4442d111478d336e1c",
+      "error": null
+    },
+    {
+      "source": "0.6.0 working tree",
+      "python": "3.14.0",
+      "shape": "comb",
+      "leaves": 1000,
+      "operation": "transfer_root",
+      "median_seconds": 0.022459040861576796,
+      "seconds": [
+        0.030894999857991934,
+        0.022314915899187326,
+        0.022414916893467307,
+        0.022459040861576796,
+        0.022548583103343844
+      ],
+      "peak_rss_mib": 122.5,
+      "sha256": "e7783fb6779bb13aad15b4b05893ca567d74e94740655b33c52049e2ea2e909c",
+      "error": null
+    }
+  ]
+}

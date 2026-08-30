@@ -1,10 +1,11 @@
 import numbers
 import re
-from collections.abc import Mapping
-from typing import Any
+from collections.abc import Mapping, Sequence
 
 import numpy as np
+from ete4 import PhyloTree
 
+from ._typing import PathInput
 from ._validation import coerce_path_argument
 
 NUCLEOTIDES = ("A", "T", "C", "G")
@@ -59,6 +60,9 @@ def _validate_nucleotide_frequency_dict(freqs):
     missing_nucleotides = sorted(set(NUCLEOTIDES) - set(freqs.keys()))
     if len(missing_nucleotides) > 0:
         raise ValueError(f"nucleotide frequency dictionary is missing keys: {missing_nucleotides}")
+    unknown_nucleotides = set(freqs) - set(NUCLEOTIDES)
+    if unknown_nucleotides:
+        raise ValueError(f"nucleotide frequency dictionary has unsupported keys: {list(unknown_nucleotides)}")
     for nuc in NUCLEOTIDES:
         value = freqs[nuc]
         if isinstance(value, bool) or (not isinstance(value, numbers.Real)):
@@ -98,7 +102,7 @@ def codon2nuc_freqs(
     return nuc_freqs
 
 
-def nuc_freq2theta(nuc_freqs: Any = None) -> list[dict[str, float]]:
+def nuc_freq2theta(nuc_freqs: Sequence[dict[str, float]] | None = None) -> list[dict[str, float]]:
     """Convert nucleotide-frequency dictionaries to mapNH theta parameters."""
     if nuc_freqs is None:
         nuc_freqs = []
@@ -139,7 +143,7 @@ def _validate_theta_entries(thetas):
                 raise ValueError(f"theta entry key '{theta_key}' must be between 0 and 1")
 
 
-def get_mapnh_thetas(model: str, thetas: Any) -> str:
+def get_mapnh_thetas(model: str, thetas: Sequence[dict[str, float]] | None) -> str:
     """Render validated F1X4 or F3X4 theta values as a mapNH model string."""
     _validate_model_string(model)
     frequency_model = _frequency_model_kind(model)
@@ -214,7 +218,7 @@ def _f3x4_nucleotide_frequencies(seq, leaf_name):
     return [{nuc: codon_seq.count(nuc) / len(codon_seq) for nuc in NUCLEOTIDES} for codon_seq in seq_codons]
 
 
-def alignment2nuc_freqs(leaf_name: str, alignment_file: Any, model: str) -> list[dict[str, float]]:
+def alignment2nuc_freqs(leaf_name: str, alignment_file: PathInput, model: str) -> list[dict[str, float]]:
     """Calculate nucleotide frequencies for one named sequence in a FASTA file."""
     _validate_model_string(model)
     frequency_model = _frequency_model_kind(model)
@@ -331,8 +335,8 @@ def _average_root_theta_positions(subroot_thetas, subroot_names, params, branch_
 
 
 def weighted_mean_root_thetas(
-    subroot_thetas: dict[str, Any],
-    tree: Any,
+    subroot_thetas: dict[str, Sequence[dict[str, float]]],
+    tree: PhyloTree,
     model: str,
 ) -> list[dict[str, float]]:
     """Estimate root theta values from immediate children using branch weights."""

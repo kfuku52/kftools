@@ -1,0 +1,25 @@
+name: Python with reusable wheel cache
+description: Share compatible pip wheels across Python patch upgrades; refresh snapshots weekly.
+inputs:
+  python-version:
+    description: CPython major.minor version
+    required: true
+  dependency-set:
+    description: Distinguish minimum and latest snapshots within the same ABI
+    default: latest
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v6
+      with:
+        python-version: ${{ inputs.python-version }}
+    - id: period
+      shell: bash
+      run: python -c "import datetime; print('week=' + datetime.datetime.now(datetime.timezone.utc).strftime('%G-W%V'))" >> "$GITHUB_OUTPUT"
+    - uses: actions/cache@v5
+      with:
+        path: ~/.cache/pip
+        key: pip-v2-${{ runner.os }}-${{ runner.arch }}-cp${{ inputs.python-version }}-${{ inputs.dependency-set }}-${{ hashFiles('pyproject.toml', 'constraints/*.txt') }}-${{ steps.period.outputs.week }}
+        restore-keys: |
+          pip-v2-${{ runner.os }}-${{ runner.arch }}-cp${{ inputs.python-version }}-${{ inputs.dependency-set }}-
+          pip-v2-${{ runner.os }}-${{ runner.arch }}-cp${{ inputs.python-version }}-

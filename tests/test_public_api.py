@@ -1,4 +1,5 @@
 import inspect
+from typing import Any
 
 import pytest
 
@@ -9,7 +10,8 @@ PUBLIC_MODULES = (kfexpression, kfog, kfphylo, kfplot, kfseq, kfspecies, kfstat,
 
 def _defined_public_callables(module):
     for name, member in inspect.getmembers(module):
-        if name.startswith("_") or getattr(member, "__module__", None) != module.__name__:
+        is_export = name in getattr(module, "__all__", ())
+        if name.startswith("_") or (getattr(member, "__module__", None) != module.__name__ and not is_export):
             continue
         if inspect.isfunction(member):
             yield f"{module.__name__}.{name}", member
@@ -37,6 +39,10 @@ def test_public_callables_are_documented_and_typed(qualified_name, callable_obje
     ]
     assert not untyped_parameters, f"{qualified_name} has untyped parameters: {untyped_parameters}"
     assert signature.return_annotation is not inspect.Signature.empty, f"{qualified_name} has no return annotation"
+    assert all(parameter.annotation not in (Any, "Any") for parameter in signature.parameters.values()), (
+        f"{qualified_name} has a bare Any parameter; use an input type or object for genuinely opaque data"
+    )
+    assert signature.return_annotation not in (Any, "Any"), f"{qualified_name} has a bare Any return type"
 
 
 @pytest.mark.parametrize(
@@ -45,7 +51,7 @@ def test_public_callables_are_documented_and_typed(qualified_name, callable_obje
         (f"{module.__name__}.{name}", member)
         for module in PUBLIC_MODULES
         for name, member in inspect.getmembers(module, inspect.isclass)
-        if not name.startswith("_") and member.__module__ == module.__name__
+        if not name.startswith("_") and (member.__module__ == module.__name__ or name in getattr(module, "__all__", ()))
     ],
 )
 def test_public_classes_are_documented(qualified_name, public_class):
