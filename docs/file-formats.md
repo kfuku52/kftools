@@ -113,7 +113,7 @@ normally `*.model.gz`, containing `best_model_AIC:`, `best_model_AICc:`, and
 `iqtree_best_AICc`, and `iqtree_best_BIC`. It does not parse the ordinary `.log`
 or `.iqtree` report, and simply gzipping those reports does not convert their
 contents to the expected format. Absent keys are omitted from the result. For
-checkpoint generation, see the [IQ-TREE command reference](https://iqtree.github.io/doc/Command-Reference#model-selection).
+checkpoint generation, see the [IQ-TREE command reference](https://iqtree.github.io/doc/Command-Reference#automatic-model-selection).
 
 The remaining log readers accept plain text:
 
