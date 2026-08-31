@@ -464,7 +464,13 @@ def parse_species_label(
     species_parser: SpeciesParser = None,
     parser: SpeciesParser = None,
 ) -> SpeciesParseResult:
-    """Parse a leaf label with a built-in, regex, mapping, or callable parser."""
+    """Parse a leaf label into canonical, display, and taxonomy-query names.
+
+    Default legacy mode keeps the first two underscore/whitespace tokens.
+    Taxonomic mode recognizes qualifiers and ranks; regex, mapping configs,
+    and callable parsers support other layouts. Parsing does not query NCBI.
+    ``parser`` aliases ``species_parser``; supply only one of them.
+    """
     _validate_species_label_input(label)
     if parser is not None:
         if species_parser is not None:

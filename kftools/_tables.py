@@ -57,7 +57,12 @@ def _scalar_values_equal(left, right):
 
 
 def compute_delta(df: pd.DataFrame, column: str) -> pd.DataFrame:
-    """Return a dataframe copy with child-minus-parent values for ``column``."""
+    """Copy a frame and set delta_<column> to child-minus-parent values.
+
+    Branch IDs must be unique across the frame; group reused IDs first.
+    Missing parents/values yield NaN. Row order, index, and unrelated columns
+    are preserved; the selected column is converted to numeric values.
+    """
     if not hasattr(df, "columns"):
         raise ValueError("compute_delta requires a dataframe-like input with columns")
     _validate_column_name(column, "column")
@@ -139,7 +144,7 @@ class MostRecentLookup:
     tables: dict[object, pd.DataFrame]
 
     def find(self, nl: Hashable, og: Hashable, target_value: object) -> object:
-        """Return the nearest matching ancestor without rebuilding table indexes."""
+        """Search this node, then its ancestors, using the prepared indexes."""
         _validate_hashable_scalar(nl, "nl must be a hashable scalar branch_id value")
         _validate_hashable_scalar(og, "og must be a hashable value comparable to the orthogroup column")
         b_og = self.tables.get(og)
@@ -154,7 +159,11 @@ def prepare_most_recent_lookup(
     return_col: str,
     og_col: str = "orthogroup",
 ) -> MostRecentLookup:
-    """Prepare indexes once for repeated :func:`get_most_recent` operations."""
+    """Prepare indexes once for repeated :func:`get_most_recent` operations.
+
+    Duplicate branch IDs within each orthogroup keep the first row. Rebuild
+    after changing source data; arbitrary objects in cells are not deep-copied.
+    """
     if not hasattr(b, "columns"):
         raise ValueError("prepare_most_recent_lookup requires a dataframe-like input with columns")
     _validate_column_name(target_col, "target_col")
@@ -194,8 +203,9 @@ def get_most_recent(
 ) -> object:
     """Return the nearest node value on the nl->root path matching a target state.
 
-    If the path cannot be followed safely (missing nodes, missing parent, or cycles),
-    this function returns np.nan.
+    The starting node is included. If no match is found before a missing node,
+    missing parent, or cycle, return np.nan. Duplicate branch IDs within the
+    orthogroup keep the first row; missing target values match each other.
     """
     if not hasattr(b, "columns"):
         raise ValueError("get_most_recent requires a dataframe-like input with columns")

@@ -9,10 +9,11 @@ phylogenetics, expression analysis, statistics, sequence models, and plotting.
 
 ## Installation
 
-Python 3.10 or newer is required.
+Python 3.10 or newer is required; CI tests Python 3.10–3.14. Install the current
+default branch with Git and pip:
 
 ```bash
-pip install git+https://github.com/kfuku52/kftools
+python -m pip install git+https://github.com/kfuku52/kftools.git
 ```
 
 For local development, use Python 3.14 and the reproducible environment in the
@@ -33,17 +34,18 @@ a `py.typed` marker.
 | `kfplot` | `stacked_barplot`, `density_scatter`, `hist_boxplot`, `ols_annotations` |
 | `kfutil` | Dictionary and RGB helpers |
 
-Functions validate malformed, missing, non-finite, and biologically invalid
-inputs and raise `ValueError` with a description of the rejected field.
-Recoverable data gaps, such as gene species absent from a reference species
-tree, are reported with Python warnings and can be filtered or captured with
-the standard `warnings` module.
+Input validation and missing-value handling are function-specific; see
+[data semantics](docs/data-semantics.md). Invalid values usually raise
+`ValueError`, while unsupported tree input types can raise `TypeError` and
+unimplemented F1X4 operations raise `NotImplementedError`. Missing reference
+species and ambiguous taxonomy matches emit `RuntimeWarning`.
 
 ## Usage and development
 
-- [Usage examples](docs/examples.md): expression specificity, trees, species labels, and ancestor lookup.
-- [Data and mutation semantics](docs/data-semantics.md).
-- [Changes in 0.6.0](docs/changes-0.6.0.md): corrected statistics and input handling.
+- [Usage examples](docs/examples.md): expression, trees, species labels, ancestor lookup, sequences, statistics, and plotting.
+- [Data and mutation semantics](docs/data-semantics.md): defaults, missing values, supported models, and tree changes.
+- [Input file formats](docs/file-formats.md): OU tables, FASTA, IQ-TREE checkpoints, and other logs.
+- [Changes in 0.6.1](docs/changes-0.6.1.md): documentation corrections and complete source archives.
 - [Development checks](docs/development.md): minimum/latest environments, typing, wheel checks, and CI.
 
 ## License

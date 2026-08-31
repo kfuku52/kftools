@@ -103,7 +103,12 @@ def codon2nuc_freqs(
 
 
 def nuc_freq2theta(nuc_freqs: Sequence[dict[str, float]] | None = None) -> list[dict[str, float]]:
-    """Convert nucleotide-frequency dictionaries to mapNH theta parameters."""
+    """Normalize A/T/C/G dictionaries and return mapNH theta parameters.
+
+    Each input dictionary must have exactly those four keys and finite,
+    non-negative values with a positive total. Inputs are not modified.
+    Zero AT or GC totals give theta1 or theta2 of 0.5, respectively.
+    """
     if nuc_freqs is None:
         nuc_freqs = []
     if not isinstance(nuc_freqs, (list, tuple)):
@@ -219,7 +224,13 @@ def _f3x4_nucleotide_frequencies(seq, leaf_name):
 
 
 def alignment2nuc_freqs(leaf_name: str, alignment_file: PathInput, model: str) -> list[dict[str, float]]:
-    """Calculate nucleotide frequencies for one named sequence in a FASTA file."""
+    """Calculate F3X4 frequencies for one sequence in a plain-text FASTA file.
+
+    Match the full header or its first whitespace-separated identifier. The
+    selected sequence must contain only A/T/C/G and complete codons; gaps and
+    ambiguity codes are rejected. Other records' lengths are not checked.
+    F1X4 raises NotImplementedError after input validation.
+    """
     _validate_model_string(model)
     frequency_model = _frequency_model_kind(model)
     if (not isinstance(leaf_name, str)) or (leaf_name.strip() == ""):
@@ -339,7 +350,12 @@ def weighted_mean_root_thetas(
     tree: PhyloTree,
     model: str,
 ) -> list[dict[str, float]]:
-    """Estimate root theta values from immediate children using branch weights."""
+    """Estimate F3X4 root thetas using inverse root-child branch lengths.
+
+    If any root-child branches have zero length, average only those children
+    equally. Children need unique non-empty names and three parameter dicts
+    with matching keys. F1X4 raises NotImplementedError after validation.
+    """
     _validate_model_string(model)
     frequency_model = _frequency_model_kind(model)
     subroot_names, subroot_branch_lengths = _validate_subroot_nodes(subroot_thetas, tree)

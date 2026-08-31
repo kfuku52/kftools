@@ -1,9 +1,13 @@
 # Development and verification
 
-Use Python 3.14 for development and type checking. Runtime support remains
-Python 3.10–3.14. No upper bounds or exact runtime dependency pins were added.
+Use Python 3.14 for development and type checking. The package requires Python
+3.10 or newer; CI covers 3.10–3.14 on Linux. The shell commands below assume
+Git, Make, and a Unix-style shell (Linux/macOS, or an equivalent environment).
+Run them from a checkout of this repository, not from an installed wheel.
 
 ```sh
+git clone https://github.com/kfuku52/kftools.git
+cd kftools
 python3.14 -m venv .venv
 make install PYTHON=.venv/bin/python
 make check PYTHON=.venv/bin/python
@@ -11,22 +15,37 @@ make check PYTHON=.venv/bin/python
 
 `make install` uses the cross-platform dependency snapshot in
 [`constraints/development-python314.txt`](../constraints/development-python314.txt).
-It pins development tools and their resolved dependencies separately from the
-published library requirements. Refresh it deliberately with `make lock-dev`
-(requires [uv](https://docs.astral.sh/uv/pip/compile/)), then run the checks below.
-For diagnosing upstream updates, `check-latest` always resolves dependencies
-afresh without this snapshot.
+It pins development tools and their resolved Python dependencies separately
+from the published library requirements. It does not lock the interpreter,
+system libraries, compilers, or isolated build dependencies. Start with a fresh
+virtual environment for reproducibility: `make install` does not remove extra
+packages already present. The universal snapshot includes platform markers;
+it is not evidence that every platform has been tested.
 
-All Makefile tools run through `$(PYTHON) -m ...`, including Ruff, mypy,
-coverage, build, Twine, and pip-audit. Set `PYTHON` to an interpreter path rather
-than relying on whichever executable happens to be first on PATH. `make format`,
-`make lint`, `make typecheck`, and `make test` provide shorter feedback loops.
+`make lock-dev` regenerates the snapshot using [uv](https://docs.astral.sh/uv/pip/compile/),
+which must be installed separately. Existing pins are retained when compatible;
+this command alone does **not** upgrade all dependencies. To intentionally
+upgrade the snapshot, run:
+
+```sh
+uv pip compile --universal --python-version 3.14 --extra dev --upgrade pyproject.toml -o constraints/development-python314.txt
+```
+
+Review the diff, reinstall into a fresh environment, and run the checks below.
+For diagnosing upstream updates without changing the snapshot, `check-latest`
+resolves dependencies afresh without it.
+
+Python quality and packaging tools run through `$(PYTHON) -m ...`, including
+Ruff, mypy, coverage, build, Twine, and pip-audit. Environment checks run the
+shared Python script; `lock-dev` invokes `$(UV)` instead. Set `PYTHON` to the
+desired interpreter. `make format`, `make lint`, `make typecheck`, and `make test`
+provide shorter feedback loops; only `format` changes source formatting.
 
 ## Clean environments
 
 ```sh
-make check-minimum PYTHON_MINIMUM=python3.10
-make check-latest PYTHON_LATEST=python3.14
+make check-minimum PYTHON=.venv/bin/python PYTHON_MINIMUM=python3.10
+make check-latest PYTHON=.venv/bin/python PYTHON_LATEST=python3.14
 make build PYTHON=.venv/bin/python
 make wheel-smoke PYTHON=.venv/bin/python
 make audit PYTHON=.venv/bin/python
@@ -34,25 +53,34 @@ make audit PYTHON=.venv/bin/python
 
 The minimum, latest, and wheel targets share
 [`scripts/check_environment.py`](../scripts/check_environment.py). Each creates
-a temporary virtual environment, installs from scratch, runs the checks, runs
-`pip check`, and removes the environment even after failure. Interpreter paths
-can be absolute. Minimum checks require 3.10; latest quality checks require
-3.14. `wheel-smoke` uses `PYTHON` and imports the installed wheel outside the
-repository with `PYTHONPATH` cleared. Keep one wheel in `dist/`, or select an
-artifact explicitly:
+a temporary virtual environment, installs from scratch, runs its checks and
+then `pip check` if those succeed. Temporary environments are removed even
+after failure. `PYTHON` runs the helper; `PYTHON_MINIMUM`/`PYTHON_LATEST` select
+the interpreter used to create the isolated environment. These interpreters
+must already be installed. Minimum checks require 3.10; latest quality checks
+require 3.14.
+
+`wheel-smoke` uses `PYTHON` and imports the installed wheel outside the repository
+with `PYTHONPATH` cleared. Keep exactly one wheel in `dist/`. Repeated builds of
+different versions leave multiple wheels; use `make clean PYTHON=.venv/bin/python`
+before building if those artifacts can be discarded, or choose the wheel with
+`--wheel /absolute/path/to/package.whl`. To check the single wheel using 3.12:
 
 ```sh
-python scripts/check_environment.py wheel --python python3.12 --wheel dist/kftools-0.6.0-py3-none-any.whl
+.venv/bin/python scripts/check_environment.py wheel --python python3.12
 ```
 
+`make clean` removes `build/`, `dist/`, `kftools.egg-info/`, and `.coverage`.
 The minimum dependency set stays in
 [`constraints/minimum-python310.txt`](../constraints/minimum-python310.txt).
-Missing compiler/system libraries during a first ETE4 build are installation
-failures, not test failures; inspect the installation log first.
+It fixes declared runtime lower bounds and one compatibility constraint, not
+every transitive dependency or test tool. A first ETE4 installation may compile
+from source; if installation fails, inspect missing compiler/system-library
+diagnostics before investigating the test suite.
 
 ## What the checks cover
 
-`make check` runs lint, formatting, type checks, and the warning-strict test
+`make check` runs lint, format validation, type checks, and the warning-strict test
 suite with branch coverage (minimum 85%). Numerical regression tests compare
 plotted values, preserve table columns and identifiers, exercise deep trees,
 and check invariants such as renaming input columns and parsing displayed names.
@@ -69,12 +97,11 @@ the type check, detecting accidental regressions to `Any`.
 
 ## CI and caches
 
-CI retains Python 3.10–3.14, minimum dependencies, latest quality checks,
-sdist/wheel validation, an installed-wheel smoke test, and a strict dependency
-audit. Packaging and auditing share the 3.12 compatibility job, reducing the
-workflow from eight jobs to six. Pushes to the default branches, pull requests,
-weekly runs, and manual runs retain the existing triggers and cancellation of
-superseded work. No branch protection settings are changed.
+CI has six jobs: latest quality checks on 3.14, compatibility tests on
+3.10–3.13, and minimum dependencies on 3.10. Packaging, installed-wheel smoke
+testing, and a strict dependency audit share the 3.12 compatibility job. Triggers
+are pushes to `master`/`main`, pull requests targeting those branches, Monday
+03:23 UTC runs, and manual dispatch. Superseded runs are cancelled.
 
 The shared [Python action](../.github/actions/python/action.yml) caches pip
 downloads and built wheels by OS, architecture, CPython major/minor, and
@@ -94,14 +121,27 @@ separately, and report whether each run restored a cache.
 ## Tree benchmarks
 
 ```sh
-python benchmarks/tree_transfers.py --shape balanced --leaves 1000
-python benchmarks/tree_transfers.py --shape comb --leaves 1000 --operation transfer_root
-python benchmarks/tree_transfers.py --source /path/to/old/checkout --shape star --leaves 1000
+.venv/bin/python benchmarks/tree_transfers.py --shape balanced --leaves 1000
+.venv/bin/python benchmarks/tree_transfers.py --shape comb --leaves 1000 --operation transfer_root
+.venv/bin/python benchmarks/tree_transfers.py --source /path/to/old/checkout --shape star --leaves 1000
 ```
 
 Run each configuration in its own process with the same interpreter and
 dependencies. The script reports all samples, median wall time, peak process
 RSS, deterministic output hashes, and recursion failures; it also checks input
 preservation. Timing excludes construction and serialization; peak RSS includes
-imports and input construction. Results from this change are in
+imports and input construction. Measurements for the 0.6.0 changes are in
 [`benchmarks.md`](benchmarks.md).
+
+## Documentation and distributions
+
+The maintained guides live in `docs/` and the public function docstrings. Update
+examples and data/file semantics together when an interface changes. Source
+distributions include the guides, images, development scripts, constraints,
+and tests via [`MANIFEST.in`](../MANIFEST.in); wheels include the library and
+`py.typed`, with the online documentation linked in package metadata.
+
+The version is defined in [`kftools/__init__.py`](../kftools/__init__.py).
+Repository policy requires a version bump before pushing changes to GitHub,
+including documentation-only changes. Historical change notes and benchmark
+versions should continue to identify the release they describe.

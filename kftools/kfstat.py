@@ -66,6 +66,9 @@ def bm_test(
     ``ttype=0`` selects a two-sided test, positive values test ``x < y``, and
     negative values test ``x > y``. The result is ``(statistic, dof, pvalue,
     probability_of_superiority, confidence_low, confidence_high)``.
+    The probability is P(X < Y) + 0.5 * P(X = Y). The interval is always a
+    two-sided 1-alpha approximation and is not clipped to [0, 1]. Samples
+    require at least two finite values each; zero pooled variance is rejected.
     """
 
     # Copyright (C) 2016 Yukishige Shibata <y-shibat@mtd.biglobe.ne.jp>
@@ -123,8 +126,9 @@ def bm_test(
 def brunner_munzel_test(x: ArrayLike, y: ArrayLike, alternative: str = "two_sided") -> tuple[float, float]:
     """Return the Brunner-Munzel statistic and approximate t-distribution p-value.
 
-    Missing and non-finite observations are discarded. ``alternative`` accepts
-    ``"greater"``, ``"less"``, or ``"two_sided"`` and their documented aliases.
+    Masked, NaN, and infinite observations are discarded. ``alternative`` accepts
+    ``"greater"``/``"g"``, ``"less"``/``"l"``, and ``"two_sided"``. Case is
+    ignored; hyphens, periods, and spaces can replace the underscore.
     """
     try:
         x = np.asarray(np.ma.asarray(x).compressed().view(np.ndarray), dtype=float).reshape(-1)

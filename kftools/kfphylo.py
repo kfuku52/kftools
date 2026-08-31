@@ -62,7 +62,12 @@ def _read_tree_path(tree_source, is_path):
 
 
 def load_phylo_tree(tree_source: TreeSource, parser: int = 1) -> ete4.PhyloTree:
-    """Load a Newick string or path as an ETE tree, or return a supplied tree."""
+    """Load Newick or a text path using ETE parser 1 (internal names) by default.
+
+    A supplied PhyloTree is returned unchanged, without copying or validation.
+    Strings ending in ``;`` are Newick; use Path for a filename ending in ``;``.
+    Unsupported input types raise TypeError; read/parse failures raise ValueError.
+    """
     if isinstance(tree_source, ete4.PhyloTree):
         return tree_source
     if tree_source is None:
@@ -172,7 +177,11 @@ def transfer_internal_node_names(tree_to: TreeSource, tree_from: TreeSource) -> 
 
 
 def fill_internal_node_names(tree: TreeSource) -> ete4.PhyloTree:
-    """Assign deterministic descendant-based names to unnamed internal nodes."""
+    """Assign unused n1, n2, ... names to unnamed internal nodes in place.
+
+    Names follow ETE traversal order, not descendant clades, so child reordering
+    can change the assigned names. Existing non-empty names are preserved.
+    """
     tree = _load_tree_or_value_error(tree, parser=1, argument_name="tree")
     used_names = {node.name for node in tree.traverse() if isinstance(node.name, str) and node.name.strip() != ""}
     counter = 1
@@ -194,8 +203,9 @@ def add_numerical_node_labels(tree: TreeSource) -> ete4.PhyloTree:
     """Assign deterministic `branch_id` values in a CSUBST-compatible manner.
 
     The ranking algorithm intentionally mirrors CSUBST's branch-ID assignment
-    so that identical tree topologies receive identical `branch_id` values
-    across kftools and CSUBST.
+    so that identical labelled, rooted topologies receive the same ranks as
+    CSUBST's ``numerical_label`` values. Leaf names must be unique and non-empty.
+    A supplied tree is modified in place, overwriting existing branch IDs.
     """
     tree = _load_tree_or_value_error(tree, parser=1, argument_name="tree")
     all_leaf_names = list(tree.leaf_names())
@@ -462,7 +472,11 @@ def _root_to_tip_extrema(tree):
 
 
 def check_ultrametric(tree: TreeSource, tol: float = 0, verbose: bool = False) -> bool:
-    """Return whether root-to-tip distances agree within an absolute tolerance."""
+    """Compare root-to-tip distances with absolute tolerance (zero by default).
+
+    Non-root branch lengths must be finite and non-negative. A non-ultrametric
+    tree returns False; verbose diagnostics use logging, not Python warnings.
+    """
     tree = _load_tree_or_value_error(tree, parser=1, argument_name="tree")
     tol = _validate_ultrametric_tolerance(tol)
     verbose = validate_boolean_flag(verbose, "verbose")
@@ -531,7 +545,13 @@ def _assign_taxids(leaves, name2id):
 def taxonomic_annotation(
     tree: TreeSource, species_parser: SpeciesParser = None, parser: SpeciesParser = None
 ) -> ete4.PhyloTree:
-    """Annotate a tree with ETE NCBI taxonomy using parsed leaf species labels."""
+    """Annotate a supplied tree in place with ETE's default NCBI database.
+
+    Species parsing defaults to legacy mode. NCBITaxa may download/build its
+    database on first use. Missing taxids raise ValueError; multiple matches
+    emit RuntimeWarning and use the first taxid. Failure may leave attributes
+    partially updated. ``parser`` is an alias for ``species_parser``.
+    """
     if parser is not None:
         if species_parser is not None:
             raise ValueError("Use only one of species_parser or parser")

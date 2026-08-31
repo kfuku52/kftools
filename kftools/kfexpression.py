@@ -8,9 +8,9 @@ from numpy.typing import ArrayLike, NDArray
 def calc_complementarity(array1: ArrayLike, array2: ArrayLike) -> float:
     """Return the mean relative difference between two non-negative profiles.
 
-    The two profiles must have identical, non-zero lengths.  Requiring matching
-    shapes keeps the result symmetric and prevents silent truncation by ``zip``-
-    style semantics.
+    Inputs are flattened and must contain equal, non-zero numbers of finite
+    values. Each pair contributes ``abs(a - b) / max(a, b)``; a pair of zeros
+    contributes zero. Inputs are not modified.
     """
     try:
         arr1 = np.asarray(array1, dtype=float).reshape(-1)
@@ -88,6 +88,11 @@ def calc_tau(
     Tau is ``sum(1 - x_i / max(x)) / (n - 1)`` for two or more tissues.
     A single-tissue profile and an all-zero profile are defined as ``0`` because
     tissue specificity cannot be inferred in those cases.
+
+    Defaults assume log2(expression + 1): apply ``2**x - 1`` and clip at zero.
+    Use ``unlog2=False`` for raw non-negative expression; ``unPlus1`` is ignored
+    in that mode. For log2(expression), use ``unlog2=True, unPlus1=False``.
+    Selected values must be finite. The input dataframe is not modified.
     """
     for flag_name, flag_value in [("unlog2", unlog2), ("unPlus1", unPlus1)]:
         if not isinstance(flag_value, (bool, np.bool_)):

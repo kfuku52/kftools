@@ -8,7 +8,10 @@ ValueT = TypeVar("ValueT")
 
 
 def add_dict_key_prefix(d: Mapping[object, ValueT], prefix: str) -> dict[str, ValueT]:
-    """Return a copy of a mapping with ``prefix`` prepended to every key."""
+    """Return a new mapping with string keys ``f'{prefix}_{key}'``.
+
+    The separator underscore is always included; values are not deep-copied.
+    """
     if not isinstance(d, Mapping):
         raise ValueError("d must be a mapping type (e.g., dict)")
     if not isinstance(prefix, str):

@@ -1,0 +1,8 @@
+include Makefile
+include .github/actions/python/action.yml
+include .github/workflows/tests.yml
+recursive-include docs *.md *.png
+recursive-include scripts *.py
+recursive-include constraints *.txt
+recursive-include benchmarks *.py *.json
+recursive-include tests *.py

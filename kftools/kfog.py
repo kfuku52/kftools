@@ -185,6 +185,10 @@ def nwk2table(
 
     ``sister=True`` emits both the legacy first-sister ``sister`` column and a
     lossless tuple-valued ``sisters`` column for polytomies.
+    A supplied tree's branch_id attributes are overwritten; rows are sorted by
+    those IDs. Missing parent/sister IDs use -1. Specify attr explicitly: its
+    historical empty-string default produces an empty-named missing column.
+    age=True requires attr='dist' and exact ultrametric branch lengths.
     """
     age = validate_boolean_flag(age, "age")
     parent = validate_boolean_flag(parent, "parent")
@@ -383,7 +387,13 @@ def node_gene2species(
     species_parser: SpeciesParser = None,
     parser: SpeciesParser = None,
 ) -> pd.DataFrame:
-    """Map each gene-tree node to its covered species-tree node."""
+    """Map gene nodes to species-tree common ancestors without changing inputs.
+
+    Parsing defaults to legacy mode. Missing reference species emit a warning
+    and give affected nodes/ancestors empty spnode_coverage strings. Optional
+    spnode_age requires both trees to be exactly ultrametric. Join on branch_id,
+    not dataframe row position.
+    """
     is_ultrametric = validate_boolean_flag(is_ultrametric, "is_ultrametric")
     species_parser = _resolve_species_parser_alias(species_parser, parser)
     gene_tree = _load_og_tree(gene_tree, "gene_tree")
@@ -604,6 +614,9 @@ def ou2table(regime_file: PathInput, leaf_file: PathInput, input_tree_file: Path
     Shift rows contain lossless, branch-ID-sorted sister comparisons.  The
     legacy scalar sister metrics remain populated only when exactly one sister
     exists; parent comparisons are emitted separately.
+    All arguments are paths. TSV headers require node_name/regime, plus param
+    and trait columns in leaf_file. Mu values are interpreted on the
+    log2(expression + 1) scale for tau and complementarity calculations.
     """
     regime_file = coerce_path_argument(regime_file, "regime_file")
     leaf_file = coerce_path_argument(leaf_file, "leaf_file")
@@ -760,7 +773,13 @@ def get_misc_node_statistics(
     species_parser: SpeciesParser = None,
     parser: SpeciesParser = None,
 ) -> pd.DataFrame:
-    """Calculate descendant, event, taxonomy, and relationship statistics."""
+    """Calculate node statistics, annotating a supplied tree in place.
+
+    branch_id, sci_name, and taxid attributes are overwritten even when
+    tax_annot=False (the default), which skips NCBI and uses taxid=-999.
+    Missing scalar relationships use -999; children/sisters tuples retain all
+    relationships. Rows follow traversal order; join on branch_id.
+    """
     tax_annot = validate_boolean_flag(tax_annot, "tax_annot")
     species_parser = _resolve_species_parser_alias(species_parser, parser)
     tree = _load_og_tree(tree_file, "tree_file")
@@ -867,7 +886,11 @@ def get_root_stats(file: PathInput) -> RootStats:
 
 
 def get_aln_stats(file: PathInput) -> dict[str, int]:
-    """Return aligned-site, sequence-count, and ungapped-length FASTA stats."""
+    """Return num_site, num_seq, len_max, and len_min for plain-text FASTA.
+
+    Gapped lengths must match. Only '-' is excluded from ungapped lengths;
+    the sequence alphabet is not validated. An empty file returns all zeros.
+    """
     file = coerce_path_argument(file, "file")
     out = {}
     seq_lens_w_gap = []
@@ -917,7 +940,11 @@ def get_aln_stats(file: PathInput) -> dict[str, int]:
 
 
 def get_iqtree_model_stats(file: PathInput) -> dict[str, str]:
-    """Parse best AIC, AICc, and BIC model names from a gzipped IQ-TREE log."""
+    """Read model names from a gzip ModelFinder checkpoint, usually .model.gz.
+
+    Recognizes best_model_AIC:, best_model_AICc:, and best_model_BIC: records,
+    not ordinary .log/.iqtree report text. Missing fields are omitted.
+    """
     out = {}
     file = coerce_path_argument(file, "file")
     try:
@@ -975,7 +1002,12 @@ def _add_regime_gamma_values(out, traits):
 
 
 def regime2tree(file: PathInput) -> dict[str, object]:
-    """Summarize a tab-separated OU regime parameter table."""
+    """Return a dictionary summarizing a tab-separated OU parameter table.
+
+    Required columns are param, regime, and traits; node_name is optional.
+    Missing-regime rows supply global parameters. num_regime is max ID + 1,
+    not the distinct-ID count; gamma is sigma2 / (2 * alpha) when available.
+    """
     file = coerce_path_argument(file, "file")
     try:
         df = pd.read_csv(file, sep="\t", header=0, index_col=False)

@@ -235,6 +235,8 @@ def stacked_barplot(
     """Stack component means by category, ignoring missing values per component.
 
     Positive and negative components are stacked separately from zero.
+    Use component columns on y for vertical bars or on x for horizontal bars;
+    the other axis is the category column. colors and ax can be None.
     """
     if not hasattr(data, "columns"):
         raise ValueError("data must be a pandas DataFrame-like object with columns")
@@ -480,7 +482,13 @@ def density_scatter(
     cmap: str | Colormap = "jet",
     num_bin: int = 20,
 ) -> Axes | AxesImage:
-    """Draw a density-colored scatter plot with optional correlation and GLM."""
+    """Draw binned density with optional correlations and a GLM fit.
+
+    Non-finite x/y pairs are discarded. A log-link GLM is fit on the original
+    response, then y/predictions are plotted in natural-log space. hue_log
+    instead controls log2 bin counts. Return an AxesImage when return_ims=True,
+    otherwise return the Axes.
+    """
     cor, diag, hue_log, show_cor_p, return_ims, cbar, num_bin = _validate_density_options(
         cor, diag, hue_log, show_cor_p, return_ims, cbar, num_bin, vmin, vmax
     )
@@ -825,11 +833,14 @@ def ols_annotations(
     method: str = "quantreg",
     stats: str | Sequence[str] | None = None,
 ) -> Axes:
-    """Fit OLS or median regression and annotate statistics on an axis.
+    """Fit median regression by default, or OLS with ``method='ols'``.
 
     ``rsquared`` is ordinary R2 for OLS and explicitly labelled pseudo R2 for
     quantile regression. ``rsquared_adj`` is available only for OLS. Undefined
     statistics (e.g. the slope for constant x) are displayed as NaN.
+    The default ``method='quantreg'`` fits quantile 0.5 with an intercept.
+    Default stats are N, slope, and slope_p; rsquared_p is the OLS F-test
+    p-value (NaN for quantreg). At least two finite x/y pairs are required.
     """
     stats = _normalize_annotation_stats(stats)
     textxy = _annotation_text_coordinates(textxy)

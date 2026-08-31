@@ -31,16 +31,18 @@ that relied on the old results should be updated.
   root's properties when a new root is introduced.
 - Ancestor lookups accept structural columns and overlapping target/return
   columns in both scalar and prepared forms. Duplicate branch rows retain the
-  existing first-row policy. Prepared lookup data remains independent of the
-  source frame.
+  existing first-row policy. Replacing values in the source frame does not
+  change prepared lookup tables; arbitrary objects in cells are not deep-copied.
 - `compute_delta` keeps unrelated columns such as `parent_value`, as well as
   row order and index, without mutating its input.
-- OU identifier columns are read as text, preserving numeric names, leading
+- `ou2table` identifier columns are read as text, preserving numeric names, leading
   zeros, and names such as `NA`. Empty names with an assigned regime are still
   invalid; numeric columns retain their numeric/missing-value validation.
 - Taxonomic parsing recognizes periods on known qualifiers and rank aliases,
   including `cf.`, `aff.`, `nr.`, `subsp.`, `ssp.`, `var.`, and `f.`. Displayed
-  scientific names round-trip, while punctuation in strain values is retained.
+  scientific names using these markers round-trip, and values such as strain
+  `168.1` retain their punctuation. Marker-like tokens remain reserved by the
+  taxonomic parser; use a custom parser for identifiers that need exact control.
 - `nuc_freq2theta` requires exactly the four supported keys A/T/C/G. Extra keys
   are rejected instead of silently changing the normalization denominator.
 

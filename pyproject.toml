@@ -61,6 +61,7 @@ dev = [
 
 [project.urls]
 Homepage = "https://github.com/kfuku52/kftools"
+Documentation = "https://github.com/kfuku52/kftools/tree/master/docs"
 Issues = "https://github.com/kfuku52/kftools/issues"
 Repository = "https://github.com/kfuku52/kftools.git"
 
