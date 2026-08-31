@@ -7,6 +7,8 @@
 `kftools` is a collection of Python utilities for evolutionary genomics,
 phylogenetics, expression analysis, statistics, sequence models, and plotting.
 
+![kfplot examples: density scatter, cumulative histograms with boxplots, and stacked bars](docs/images/kfplot_examples.png)
+
 ## Installation
 
 Python 3.10 or newer is required; CI tests Python 3.10–3.14. Install the current
@@ -45,7 +47,7 @@ species and ambiguous taxonomy matches emit `RuntimeWarning`.
 - [Usage examples](docs/examples.md): expression, trees, species labels, ancestor lookup, sequences, statistics, and plotting.
 - [Data and mutation semantics](docs/data-semantics.md): defaults, missing values, supported models, and tree changes.
 - [Input file formats](docs/file-formats.md): OU tables, FASTA, IQ-TREE checkpoints, and other logs.
-- [Changes in 0.6.2](docs/changes-0.6.2.md): documentation corrections and complete source archives.
+- [Changes in 0.6.3](docs/changes-0.6.3.md): restored README plot preview and recent documentation improvements.
 - [Development checks](docs/development.md): minimum/latest environments, typing, wheel checks, and CI.
 
 ## License
