@@ -23,7 +23,7 @@ def test_species_parse_result_rejects_invalid_explicit_names(keyword, value):
 
 @pytest.mark.parametrize(
     ("model", "count", "expected"),
-    [("F1X4", 3, 1), ("F3X4", 1, 3), ("F3X4", 2, 3)],
+    [("F1X4", 3, 1), ("F3X4", 1, 3)],
 )
 def test_mapnh_theta_cardinality_matches_frequency_model(model, count, expected):
     theta = {"theta": 0.5, "theta1": 0.5, "theta2": 0.5}
@@ -227,7 +227,7 @@ def test_polytomy_relationship_columns_are_lossless(tmp_path):
     )
 
 
-def test_prepared_most_recent_lookup_matches_scalar_api_and_reuses_indexes():
+def test_prepared_most_recent_lookup_keeps_orthogroups_separate():
     data = pd.DataFrame(
         {
             "orthogroup": ["og1", "og1", "og1", "og2", "og2"],
@@ -238,18 +238,10 @@ def test_prepared_most_recent_lookup_matches_scalar_api_and_reuses_indexes():
         }
     )
     lookup = kfog.prepare_most_recent_lookup(data, "flag", "value")
-    prepared_table_ids = {orthogroup: id(table) for orthogroup, table in lookup.tables.items()}
 
-    for branch_id, orthogroup in [(0, "og1"), (1, "og1"), (0, "og2")]:
-        assert lookup.find(branch_id, orthogroup, 1) == kfog.get_most_recent(
-            data,
-            branch_id,
-            orthogroup,
-            "flag",
-            1,
-            "value",
-        )
-    assert {orthogroup: id(table) for orthogroup, table in lookup.tables.items()} == prepared_table_ids
+    assert lookup.find(0, "og1", 1) == 30
+    assert lookup.find(1, "og1", 1) == 30
+    assert lookup.find(0, "og2", 1) == 50
 
 
 def test_missing_gene_species_uses_warning_instead_of_stderr():

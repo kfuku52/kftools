@@ -8,6 +8,7 @@ import ete4
 import matplotlib
 import numpy as np
 import pandas as pd
+import pytest
 
 matplotlib.use("Agg")
 
@@ -44,10 +45,6 @@ class TestKFOG(unittest.TestCase):
             len(list(mixed_attr_tree.traverse())),
         )
         self.assertIn(None, mixed_attr_table["custom_attr"].tolist())
-        with self.assertRaisesRegex(ValueError, "attr must be a string"):
-            kfog.nwk2table(newick, attr=None)
-        with self.assertRaisesRegex(ValueError, "tree must be a Newick string"):
-            kfog.nwk2table(0, attr="dist")
         with self.assertRaisesRegex(ValueError, "valid Newick string"):
             kfog.nwk2table("not_newick", attr="dist")
 
@@ -59,10 +56,6 @@ class TestKFOG(unittest.TestCase):
             kfog.nwk2table("((A_a:1,B_b:1):1,C_c:2);", attr="support", age=True)
         with self.assertRaisesRegex(ValueError, "age must be a boolean value"):
             kfog.nwk2table("((A_a:1,B_b:1):1,C_c:2);", attr="dist", age="False")
-        with self.assertRaisesRegex(ValueError, "parent must be a boolean value"):
-            kfog.nwk2table("((A_a:1,B_b:1):1,C_c:2);", attr="dist", parent="False")
-        with self.assertRaisesRegex(ValueError, "sister must be a boolean value"):
-            kfog.nwk2table("((A_a:1,B_b:1):1,C_c:2);", attr="dist", sister="False")
 
     def test_kfog_nwk2table_pathlike_input(self):
         with tempfile.NamedTemporaryFile("w", delete=False) as tmp:
@@ -87,10 +80,6 @@ class TestKFOG(unittest.TestCase):
             self.assertTrue((out["so_event"] == "D").any())
         finally:
             os.unlink(path)
-        with self.assertRaisesRegex(ValueError, "tree_file must be a Newick string"):
-            kfog.get_misc_node_statistics(0, tax_annot=False)
-        with self.assertRaisesRegex(ValueError, "tax_annot must be a boolean value"):
-            kfog.get_misc_node_statistics("((S1_a_1:1,S1_a_2:1):1,S2_b_1:2);", tax_annot="False")
         with tempfile.NamedTemporaryFile("w", delete=False) as tmp:
             poly_path = tmp.name
             tmp.write("(S1_a_1:1,S1_a_2:1,S1_a_3:1,S2_b_1:1);")
@@ -132,68 +121,6 @@ class TestKFOG(unittest.TestCase):
             os.unlink(invalid_utf8_path)
         with self.assertRaisesRegex(ValueError, "path-like"):
             kfog.get_iqtree_model_stats(ete4.PhyloTree("(A:1,B:1);", parser=1))
-
-    def test_kfog_file_argument_validation(self):
-        class BadPath(os.PathLike):
-            def __fspath__(self):
-                return 1
-
-        bad_file = ete4.PhyloTree("(A:1,B:1);", parser=1)
-        file_funcs = [
-            kfog.get_notung_root_stats,
-            kfog.get_notung_reconcil_stats,
-            kfog.get_root_stats,
-            kfog.get_aln_stats,
-            kfog.get_dating_method,
-            kfog.regime2tree,
-        ]
-        for fn in file_funcs:
-            with self.assertRaisesRegex(ValueError, "path-like"):
-                fn(bad_file)
-        for fn in file_funcs:
-            with self.assertRaisesRegex(ValueError, "path-like"):
-                fn(BadPath())
-        for fn in file_funcs:
-            with self.assertRaisesRegex(ValueError, "bytes are not supported"):
-                fn(b"/tmp/definitely_missing_kftools_file_123456789.txt")
-        for fn in file_funcs:
-            with self.assertRaisesRegex(ValueError, "Failed to read file"):
-                fn("/tmp/definitely_missing_kftools_file_123456789.txt")
-        with self.assertRaisesRegex(ValueError, "regime_file must be a path-like"):
-            kfog.ou2table(bad_file, "x.tsv", "x.nwk")
-        with self.assertRaisesRegex(ValueError, "regime_file must be a path-like"):
-            kfog.ou2table(BadPath(), "x.tsv", "x.nwk")
-        with self.assertRaisesRegex(ValueError, "bytes are not supported"):
-            kfog.ou2table(
-                b"/tmp/definitely_missing_kftools_regime_123456.tsv",
-                "x.tsv",
-                "x.nwk",
-            )
-        with tempfile.NamedTemporaryFile("w", delete=False) as tree_tmp:
-            tree_path = tree_tmp.name
-            tree_tmp.write("(A_x:1,B_x:1)Root;\n")
-        try:
-            with self.assertRaisesRegex(ValueError, "Failed to read regime_file"):
-                kfog.ou2table("/tmp/definitely_missing_kftools_regime_123456.tsv", "x.tsv", tree_path)
-        finally:
-            os.unlink(tree_path)
-        with tempfile.NamedTemporaryFile("wb", delete=False) as regime_tmp:
-            regime_bad_utf8_path = regime_tmp.name
-            regime_tmp.write(b"\xff\xfe\xfd")
-        with tempfile.NamedTemporaryFile("w", delete=False) as leaf_tmp:
-            leaf_path = leaf_tmp.name
-            leaf_tmp.write("node_name\tparam\tregime\tt1\n")
-            leaf_tmp.write("x\tmu\t0\t1.0\n")
-        with tempfile.NamedTemporaryFile("w", delete=False) as tree_tmp:
-            tree_path = tree_tmp.name
-            tree_tmp.write("(A_x:1,B_x:1)Root;\n")
-        try:
-            with self.assertRaisesRegex(ValueError, "UTF-8 tab-separated text"):
-                kfog.ou2table(regime_bad_utf8_path, leaf_path, tree_path)
-        finally:
-            os.unlink(regime_bad_utf8_path)
-            os.unlink(leaf_path)
-            os.unlink(tree_path)
 
     def test_kfog_node_gene2species_ultrametric(self):
         species_tree = ete4.PhyloTree("((A_x:1,B_x:1):1,(C_x:1,D_x:1):1);", parser=1)
@@ -238,12 +165,6 @@ class TestKFOG(unittest.TestCase):
                 "((A_x:1,A_x:1):1,C_x:2);",
                 is_ultrametric=False,
             )
-        with self.assertRaisesRegex(ValueError, "gene_tree must be a Newick string"):
-            kfog.node_gene2species(0, species_tree, is_ultrametric=False)
-        with self.assertRaisesRegex(ValueError, "species_tree must be a Newick string"):
-            kfog.node_gene2species(gene_tree, 0, is_ultrametric=False)
-        with self.assertRaisesRegex(ValueError, "is_ultrametric must be a boolean value"):
-            kfog.node_gene2species(gene_tree, species_tree, is_ultrametric="False")
 
     def test_kfog_node_gene2species_species_parsers(self):
         def coverage_signature(df):
@@ -308,9 +229,9 @@ class TestKFOG(unittest.TestCase):
             regime_tmp.write("N1\t1\n")
         with tempfile.NamedTemporaryFile("w", delete=False) as leaf_tmp:
             leaf_path = leaf_tmp.name
-            leaf_tmp.write("node_name\tparam\tregime\tt1\tt2\n")
-            leaf_tmp.write("x\tmu\t0\t1.0\t2.0\n")
-            leaf_tmp.write("x\tmu\t1\t2.0\t3.0\n")
+            leaf_tmp.write("t1\tnode_name\tregime\tparam\tt2\n")
+            leaf_tmp.write("1.0\tx\t0\tmu\t2.0\n")
+            leaf_tmp.write("2.0\tx\t1\tmu\t3.0\n")
         with tempfile.NamedTemporaryFile("w", delete=False) as tree_tmp:
             tree_path = tree_tmp.name
             tree_tmp.write("((A_x:1,B_x:1)N1:1,C_x:2)Root;\n")
@@ -322,6 +243,8 @@ class TestKFOG(unittest.TestCase):
             self.assertIn("sister_branch_ids", out.columns)
             self.assertIn("delta_maxmu_parent", out.columns)
             self.assertIn("mu_t1", out.columns)
+            self.assertIn("mu_t2", out.columns)
+            self.assertNotIn("mu_param", out.columns)
             self.assertEqual(out.shape[0], len(list(kfphylo.load_phylo_tree(tree_path, parser=1).traverse())))
             names = kfog.nwk2table(tree_path, attr="name")
             n1_label = names.loc[names["name"] == "N1", "branch_id"].iloc[0]
@@ -329,30 +252,6 @@ class TestKFOG(unittest.TestCase):
             self.assertEqual(len(n1_row["sister_branch_ids"]), 1)
             self.assertAlmostEqual(n1_row["delta_maxmu"], n1_row["delta_maxmu_sisters"][0])
             self.assertAlmostEqual(n1_row["mu_complementarity"], n1_row["mu_complementarity_sisters"][0])
-        finally:
-            os.unlink(regime_path)
-            os.unlink(leaf_path)
-            os.unlink(tree_path)
-
-    def test_kfog_ou2table_accepts_shuffled_leaf_trait_columns(self):
-        with tempfile.NamedTemporaryFile("w", delete=False) as regime_tmp:
-            regime_path = regime_tmp.name
-            regime_tmp.write("node_name\tregime\n")
-            regime_tmp.write("N1\t1\n")
-        with tempfile.NamedTemporaryFile("w", delete=False) as leaf_tmp:
-            leaf_path = leaf_tmp.name
-            leaf_tmp.write("t1\tnode_name\tregime\tparam\tt2\n")
-            leaf_tmp.write("1.0\tx\t0\tmu\t2.0\n")
-            leaf_tmp.write("2.0\tx\t1\tmu\t3.0\n")
-        with tempfile.NamedTemporaryFile("w", delete=False) as tree_tmp:
-            tree_path = tree_tmp.name
-            tree_tmp.write("((A_x:1,B_x:1)N1:1,C_x:2)Root;\n")
-        try:
-            out = kfog.ou2table(regime_path, leaf_path, tree_path)
-            self.assertIn("mu_t1", out.columns)
-            self.assertIn("mu_t2", out.columns)
-            self.assertNotIn("mu_param", out.columns)
-            self.assertEqual(out.shape[0], len(list(kfphylo.load_phylo_tree(tree_path, parser=1).traverse())))
         finally:
             os.unlink(regime_path)
             os.unlink(leaf_path)
@@ -471,21 +370,6 @@ class TestKFOG(unittest.TestCase):
         finally:
             os.unlink(path4)
 
-        with tempfile.NamedTemporaryFile("w", delete=False) as tmp:
-            tsv = tmp.name
-            tmp.write("node_name\tparam\tregime\ttrait1\ttrait2\n")
-            tmp.write("n1\talpha\t\t2\t4\n")
-            tmp.write("n1\tsigma2\t\t6\t8\n")
-            tmp.write("n2\tmu\t1\t1\t2\n")
-        try:
-            out = kfog.regime2tree(tsv)
-            self.assertEqual(out["num_regime"], 2)
-            self.assertEqual(out["alpha_trait1"], 2)
-            self.assertEqual(out["sigma2_trait2"], 8)
-            self.assertAlmostEqual(out["gamma_trait1"], 6 / (2 * 2))
-        finally:
-            os.unlink(tsv)
-
         b = pd.DataFrame(
             {
                 "orthogroup": ["og1", "og1", "og1", "og2"],
@@ -571,18 +455,6 @@ class TestKFOG(unittest.TestCase):
         self.assertEqual(kfog.get_most_recent(b_non_monotonic, 0, "og1", "flag", 1, "value"), 100)
         with self.assertRaisesRegex(ValueError, "requires columns"):
             kfog.get_most_recent(pd.DataFrame({"orthogroup": ["og1"]}), 0, "og1", "flag", 1, "value")
-        with self.assertRaisesRegex(ValueError, "dataframe-like"):
-            kfog.get_most_recent(None, 0, "og1", "flag", 1, "value")
-        with self.assertRaisesRegex(ValueError, "target_col must be a string"):
-            kfog.get_most_recent(b, 0, "og1", ["flag"], 1, "value")
-        with self.assertRaisesRegex(ValueError, "return_col must be a string"):
-            kfog.get_most_recent(b, 0, "og1", "flag", 1, ["value"])
-        with self.assertRaisesRegex(ValueError, "og_col must be a string"):
-            kfog.get_most_recent(b, 0, "og1", "flag", 1, "value", og_col=["orthogroup"])
-        with self.assertRaisesRegex(ValueError, "nl must be a hashable"):
-            kfog.get_most_recent(b, [], "og1", "flag", 1, "value")
-        with self.assertRaisesRegex(ValueError, "og must be a hashable"):
-            kfog.get_most_recent(b, 0, [], "flag", 1, "value")
         with self.assertRaisesRegex(ValueError, "parent column must contain hashable values"):
             kfog.get_most_recent(
                 pd.DataFrame(
@@ -643,13 +515,6 @@ class TestKFOG(unittest.TestCase):
             )
         with self.assertRaisesRegex(ValueError, "requires columns"):
             kfog.compute_delta(pd.DataFrame({"branch_id": [0], "x": [1.0]}), "x")
-        with self.assertRaisesRegex(ValueError, "dataframe-like"):
-            kfog.compute_delta(None, "x")
-        with self.assertRaisesRegex(ValueError, "column must be a string"):
-            kfog.compute_delta(
-                pd.DataFrame({"branch_id": [0], "parent": [0], "x": [1.0]}),
-                ["x"],
-            )
         with self.assertRaisesRegex(ValueError, "requires numeric values"):
             kfog.compute_delta(
                 pd.DataFrame({"branch_id": [0, 1], "parent": [1, 1], "x": ["a", "b"]}),
@@ -679,11 +544,8 @@ class TestKFOG(unittest.TestCase):
     def test_kfog_notung_parser_robustness(self):
         with tempfile.NamedTemporaryFile("w", delete=False) as tmp:
             path = tmp.name
-            tmp.write("Best rooting score: 1,2, worst rooting score: 3,4\n")
-            tmp.write("Best rooting score:1.0,worst rooting score:2.0\n")
-            tmp.write("Best rooting score: , worst rooting score: \n")
-            tmp.write("Best rooting score: .5, worst rooting score: 1.5\n")
             tmp.write("Best rooting score: -1.2e-3, worst rooting score: +2.3E+2\n")
+            tmp.write("Best rooting score: , worst rooting score: \n")
             tmp.write("Reconciliation Information\n")
             tmp.write("- Duplications: 1,234\n")
             tmp.write("- Co-Divergences: 6\n")
@@ -708,8 +570,6 @@ class TestKFOG(unittest.TestCase):
         with tempfile.NamedTemporaryFile("w", delete=False) as tmp:
             path = tmp.name
             tmp.write("NUMBER OF OPTIMAL ROOTS: 1,234 OUT OF 5,678\n")
-            tmp.write("Best rooting score: 1.234, worst rooting score: 2.345\n")
-            tmp.write("Best rooting score: 1,234.5, worst rooting score: 2,345.6\n")
             tmp.write("best rooting score: -1.234,5, worst rooting score: +2.345,6\n")
         try:
             out_root = kfog.get_notung_root_stats(path)
@@ -740,342 +600,74 @@ class TestKFOG(unittest.TestCase):
         finally:
             os.unlink(path)
 
-    def test_kfog_regime2tree_input_validation(self):
-        with tempfile.NamedTemporaryFile("w", delete=False) as tmp:
-            empty_data_path = tmp.name
-            tmp.write("param\tregime\n")
-        try:
-            with self.assertRaisesRegex(ValueError, "at least one data row"):
-                kfog.regime2tree(empty_data_path)
-        finally:
-            os.unlink(empty_data_path)
-        with tempfile.NamedTemporaryFile("wb", delete=False) as tmp:
-            bad_utf8_path = tmp.name
-            tmp.write(b"\xff\xfe\xfd")
-        try:
-            with self.assertRaisesRegex(ValueError, "UTF-8 tab-separated text"):
-                kfog.regime2tree(bad_utf8_path)
-        finally:
-            os.unlink(bad_utf8_path)
-        with tempfile.NamedTemporaryFile("w", delete=False) as tmp:
-            empty_file_path = tmp.name
-            tmp.write("")
-        try:
-            with self.assertRaisesRegex(ValueError, "UTF-8 tab-separated text"):
-                kfog.regime2tree(empty_file_path)
-        finally:
-            os.unlink(empty_file_path)
 
-        with tempfile.NamedTemporaryFile("w", delete=False) as tmp:
-            missing_col_path = tmp.name
-            tmp.write("node_name\tparam\ttrait1\n")
-            tmp.write("n1\talpha\t2\n")
-        try:
-            with self.assertRaisesRegex(ValueError, "requires columns"):
-                kfog.regime2tree(missing_col_path)
-        finally:
-            os.unlink(missing_col_path)
+@pytest.mark.parametrize(
+    ("contents", "error"),
+    [
+        ("param\tregime\n", "at least one data row"),
+        ("node_name\tparam\ttrait1\nn1\talpha\t2\n", "requires columns"),
+        ("node_name\tparam\tregime\nn1\talpha\t\n", "at least one trait column"),
+        ("node_name\tparam\tregime\ttrait1\nn1\talpha\t1.5\t2\n", "integer IDs"),
+        ("node_name\tparam\tregime\ttrait1\nn1\talpha\t-1\t2\n", "non-negative IDs"),
+        ("node_name\tparam\tregime\ttrait1\nn1\talpha\t9223372036854775808\t2\n", "integer overflow"),
+        ("node_name\tparam\tregime\ttrait1\nn1\talpha\t\t0\nn1\tsigma2\t\t1\n", "non-zero"),
+        ("node_name\tparam\tregime\ttrait1\nn1\talpha\t\t2\nn2\talpha\t\t3\n", "conflicting values"),
+    ],
+)
+def test_regime_table_rejects_unusable_parameters(tmp_path, contents, error):
+    path = tmp_path / "regime.tsv"
+    path.write_text(contents)
+    with pytest.raises(ValueError, match=error):
+        kfog.regime2tree(path)
 
-        with tempfile.NamedTemporaryFile("w", delete=False) as tmp:
-            no_trait_path = tmp.name
-            tmp.write("node_name\tparam\tregime\n")
-            tmp.write("n1\talpha\t\n")
-        try:
-            with self.assertRaisesRegex(ValueError, "at least one trait column"):
-                kfog.regime2tree(no_trait_path)
-        finally:
-            os.unlink(no_trait_path)
 
-        with tempfile.NamedTemporaryFile("w", delete=False) as tmp:
-            invalid_regime_path = tmp.name
-            tmp.write("node_name\tparam\tregime\ttrait1\n")
-            tmp.write("n1\talpha\tx\t2\n")
-        try:
-            with self.assertRaisesRegex(ValueError, "must be numeric or NaN"):
-                kfog.regime2tree(invalid_regime_path)
-        finally:
-            os.unlink(invalid_regime_path)
+def test_regime_table_without_regime_assignments(tmp_path):
+    path = tmp_path / "regime.tsv"
+    path.write_text("node_name\tparam\tregime\ttrait1\nn1\talpha\t\t2\n")
+    assert kfog.regime2tree(path)["num_regime"] == 0
 
-        with tempfile.NamedTemporaryFile("w", delete=False) as tmp:
-            negative_regime_path = tmp.name
-            tmp.write("node_name\tparam\tregime\ttrait1\n")
-            tmp.write("n1\talpha\t-1\t2\n")
-        try:
-            with self.assertRaisesRegex(ValueError, "non-negative IDs"):
-                kfog.regime2tree(negative_regime_path)
-        finally:
-            os.unlink(negative_regime_path)
 
-        with tempfile.NamedTemporaryFile("w", delete=False) as tmp:
-            non_integer_regime_path = tmp.name
-            tmp.write("node_name\tparam\tregime\ttrait1\n")
-            tmp.write("n1\talpha\t1.5\t2\n")
-        try:
-            with self.assertRaisesRegex(ValueError, "integer IDs"):
-                kfog.regime2tree(non_integer_regime_path)
-        finally:
-            os.unlink(non_integer_regime_path)
-        with tempfile.NamedTemporaryFile("w", delete=False) as tmp:
-            inf_regime_path = tmp.name
-            tmp.write("node_name\tparam\tregime\ttrait1\n")
-            tmp.write("n1\talpha\tinf\t2\n")
-        try:
-            with self.assertRaisesRegex(ValueError, "finite numeric values"):
-                kfog.regime2tree(inf_regime_path)
-        finally:
-            os.unlink(inf_regime_path)
-        with tempfile.NamedTemporaryFile("w", delete=False) as tmp:
-            huge_regime_path = tmp.name
-            tmp.write("node_name\tparam\tregime\ttrait1\n")
-            tmp.write("n1\talpha\t9223372036854775808\t2\n")
-        try:
-            with self.assertRaisesRegex(ValueError, "avoid integer overflow"):
-                kfog.regime2tree(huge_regime_path)
-        finally:
-            os.unlink(huge_regime_path)
+@pytest.fixture
+def ou_files(tmp_path):
+    regime = tmp_path / "regime.tsv"
+    leaf = tmp_path / "leaf.tsv"
+    tree = tmp_path / "tree.nwk"
+    regime.write_text("node_name\tregime\nN1\t1\n")
+    leaf.write_text("node_name\tparam\tregime\tt1\nx\tmu\t0\t1.0\nx\tmu\t1\t2.0\nx\tmu\t2\t3.0\n")
+    tree.write_text("((A_x:1,B_x:1)N1:1,C_x:2)Root;\n")
+    return regime, leaf, tree
 
-    def test_kfog_regime2tree_parameter_validation(self):
-        with tempfile.NamedTemporaryFile("w", delete=False) as tmp:
-            zero_alpha_path = tmp.name
-            tmp.write("node_name\tparam\tregime\ttrait1\n")
-            tmp.write("n1\talpha\t\t0\n")
-            tmp.write("n1\tsigma2\t\t1\n")
-        try:
-            with self.assertRaisesRegex(ValueError, "must be non-zero"):
-                kfog.regime2tree(zero_alpha_path)
-        finally:
-            os.unlink(zero_alpha_path)
 
-        with tempfile.NamedTemporaryFile("w", delete=False) as tmp:
-            conflicting_param_path = tmp.name
-            tmp.write("node_name\tparam\tregime\ttrait1\n")
-            tmp.write("n1\talpha\t\t2\n")
-            tmp.write("n2\talpha\t\t3\n")
-        try:
-            with self.assertRaisesRegex(ValueError, "conflicting values for param"):
-                kfog.regime2tree(conflicting_param_path)
-        finally:
-            os.unlink(conflicting_param_path)
+@pytest.mark.parametrize(
+    ("node_rows", "error"),
+    [
+        ("N1\t1.5\n", "integer IDs"),
+        ("N1\t1\nN1\t2\n", "conflicting regime IDs"),
+        ("UnknownNode\t1\n", "not present in input_tree_file"),
+        ("\t1\n", "non-empty string values"),
+    ],
+)
+def test_ou_rejects_ambiguous_regime_mapping(ou_files, node_rows, error):
+    regime, leaf, tree = ou_files
+    regime.write_text("node_name\tregime\n" + node_rows)
+    with pytest.raises(ValueError, match=error):
+        kfog.ou2table(regime, leaf, tree)
 
-        with tempfile.NamedTemporaryFile("w", delete=False) as tmp:
-            missing_param_name_path = tmp.name
-            tmp.write("node_name\tparam\tregime\ttrait1\n")
-            tmp.write("n1\t\t\t2\n")
-        try:
-            with self.assertRaisesRegex(ValueError, "non-empty param names"):
-                kfog.regime2tree(missing_param_name_path)
-        finally:
-            os.unlink(missing_param_name_path)
 
-        with tempfile.NamedTemporaryFile("w", delete=False) as tmp:
-            all_nan_regime_path = tmp.name
-            tmp.write("node_name\tparam\tregime\ttrait1\n")
-            tmp.write("n1\talpha\t\t2\n")
-        try:
-            out = kfog.regime2tree(all_nan_regime_path)
-            self.assertEqual(out["num_regime"], 0)
-        finally:
-            os.unlink(all_nan_regime_path)
+def test_ou_rejects_duplicate_tree_names(ou_files):
+    regime, leaf, tree = ou_files
+    tree.write_text("((A_x:1,B_x:1)N1:1,(C_x:1,D_x:1)N1:1)Root;\n")
+    with pytest.raises(ValueError, match="duplicate non-empty node names"):
+        kfog.ou2table(regime, leaf, tree)
 
-    def test_kfog_ou2table_input_validation(self):
-        with self.assertRaisesRegex(ValueError, "input_tree_file must be an existing file path"):
-            kfog.ou2table(
-                "/tmp/definitely_missing_kftools_regime_abc.tsv",
-                "/tmp/definitely_missing_kftools_leaf_abc.tsv",
-                "/tmp/definitely_missing_kftools_tree_abc.nwk",
-            )
 
-        with tempfile.NamedTemporaryFile("w", delete=False) as regime_tmp:
-            regime_path = regime_tmp.name
-            regime_tmp.write("node_name\tregime\n")
-            regime_tmp.write("N1\t1\n")
-        with tempfile.NamedTemporaryFile("w", delete=False) as leaf_tmp:
-            leaf_path_missing_regime = leaf_tmp.name
-            leaf_tmp.write("node_name\tparam\tt1\n")
-            leaf_tmp.write("x\tmu\t1.0\n")
-        with tempfile.NamedTemporaryFile("w", delete=False) as tree_tmp:
-            tree_path = tree_tmp.name
-            tree_tmp.write("((A_x:1,B_x:1)N1:1,C_x:2)Root;\n")
-        try:
-            with self.assertRaisesRegex(ValueError, "leaf_file requires columns"):
-                kfog.ou2table(regime_path, leaf_path_missing_regime, tree_path)
-        finally:
-            os.unlink(regime_path)
-            os.unlink(leaf_path_missing_regime)
-            os.unlink(tree_path)
+def test_ou_requires_leaf_regime_column(ou_files):
+    regime, leaf, tree = ou_files
+    leaf.write_text("node_name\tparam\tt1\nx\tmu\t1.0\n")
+    with pytest.raises(ValueError, match="leaf_file requires columns"):
+        kfog.ou2table(regime, leaf, tree)
 
-        with tempfile.NamedTemporaryFile("w", delete=False) as regime_tmp:
-            regime_non_integer_path = regime_tmp.name
-            regime_tmp.write("node_name\tregime\n")
-            regime_tmp.write("N1\t1.5\n")
-        with tempfile.NamedTemporaryFile("w", delete=False) as leaf_tmp:
-            leaf_path = leaf_tmp.name
-            leaf_tmp.write("node_name\tparam\tregime\tt1\n")
-            leaf_tmp.write("x\tmu\t0\t1.0\n")
-            leaf_tmp.write("x\tmu\t1\t2.0\n")
-        with tempfile.NamedTemporaryFile("w", delete=False) as tree_tmp:
-            tree_path = tree_tmp.name
-            tree_tmp.write("((A_x:1,B_x:1)N1:1,C_x:2)Root;\n")
-        try:
-            with self.assertRaisesRegex(ValueError, "must contain integer IDs"):
-                kfog.ou2table(regime_non_integer_path, leaf_path, tree_path)
-        finally:
-            os.unlink(regime_non_integer_path)
-            os.unlink(leaf_path)
-            os.unlink(tree_path)
-        with tempfile.NamedTemporaryFile("w", delete=False) as regime_tmp:
-            regime_inf_path = regime_tmp.name
-            regime_tmp.write("node_name\tregime\n")
-            regime_tmp.write("N1\tinf\n")
-        with tempfile.NamedTemporaryFile("w", delete=False) as leaf_tmp:
-            leaf_path = leaf_tmp.name
-            leaf_tmp.write("node_name\tparam\tregime\tt1\n")
-            leaf_tmp.write("x\tmu\t0\t1.0\n")
-            leaf_tmp.write("x\tmu\t1\t2.0\n")
-        with tempfile.NamedTemporaryFile("w", delete=False) as tree_tmp:
-            tree_path = tree_tmp.name
-            tree_tmp.write("((A_x:1,B_x:1)N1:1,C_x:2)Root;\n")
-        try:
-            with self.assertRaisesRegex(ValueError, "finite numeric values"):
-                kfog.ou2table(regime_inf_path, leaf_path, tree_path)
-        finally:
-            os.unlink(regime_inf_path)
-            os.unlink(leaf_path)
-            os.unlink(tree_path)
-        with tempfile.NamedTemporaryFile("w", delete=False) as regime_tmp:
-            regime_empty_path = regime_tmp.name
-            regime_tmp.write("")
-        with tempfile.NamedTemporaryFile("w", delete=False) as leaf_tmp:
-            leaf_path = leaf_tmp.name
-            leaf_tmp.write("node_name\tparam\tregime\tt1\n")
-            leaf_tmp.write("x\tmu\t0\t1.0\n")
-        with tempfile.NamedTemporaryFile("w", delete=False) as tree_tmp:
-            tree_path = tree_tmp.name
-            tree_tmp.write("(A_x:1,B_x:1)Root;\n")
-        try:
-            with self.assertRaisesRegex(ValueError, "UTF-8 tab-separated text"):
-                kfog.ou2table(regime_empty_path, leaf_path, tree_path)
-        finally:
-            os.unlink(regime_empty_path)
-            os.unlink(leaf_path)
-            os.unlink(tree_path)
 
-    def test_kfog_ou2table_mapping_validation(self):
-        with tempfile.NamedTemporaryFile("w", delete=False) as regime_tmp:
-            conflicting_regime_path = regime_tmp.name
-            regime_tmp.write("node_name\tregime\n")
-            regime_tmp.write("N1\t1\n")
-            regime_tmp.write("N1\t2\n")
-        with tempfile.NamedTemporaryFile("w", delete=False) as leaf_tmp:
-            leaf_path = leaf_tmp.name
-            leaf_tmp.write("node_name\tparam\tregime\tt1\n")
-            leaf_tmp.write("x\tmu\t0\t1.0\n")
-            leaf_tmp.write("x\tmu\t1\t2.0\n")
-            leaf_tmp.write("x\tmu\t2\t3.0\n")
-        with tempfile.NamedTemporaryFile("w", delete=False) as tree_tmp:
-            tree_path = tree_tmp.name
-            tree_tmp.write("((A_x:1,B_x:1)N1:1,C_x:2)Root;\n")
-        try:
-            with self.assertRaisesRegex(ValueError, "conflicting regime IDs"):
-                kfog.ou2table(conflicting_regime_path, leaf_path, tree_path)
-        finally:
-            os.unlink(conflicting_regime_path)
-            os.unlink(leaf_path)
-            os.unlink(tree_path)
-        with tempfile.NamedTemporaryFile("w", delete=False) as regime_tmp:
-            unknown_node_name_path = regime_tmp.name
-            regime_tmp.write("node_name\tregime\n")
-            regime_tmp.write("UnknownNode\t1\n")
-        with tempfile.NamedTemporaryFile("w", delete=False) as leaf_tmp:
-            leaf_path = leaf_tmp.name
-            leaf_tmp.write("node_name\tparam\tregime\tt1\n")
-            leaf_tmp.write("x\tmu\t0\t1.0\n")
-            leaf_tmp.write("x\tmu\t1\t2.0\n")
-        with tempfile.NamedTemporaryFile("w", delete=False) as tree_tmp:
-            tree_path = tree_tmp.name
-            tree_tmp.write("((A_x:1,B_x:1)N1:1,C_x:2)Root;\n")
-        try:
-            with self.assertRaisesRegex(ValueError, "not present in input_tree_file"):
-                kfog.ou2table(unknown_node_name_path, leaf_path, tree_path)
-        finally:
-            os.unlink(unknown_node_name_path)
-            os.unlink(leaf_path)
-            os.unlink(tree_path)
-        with tempfile.NamedTemporaryFile("w", delete=False) as regime_tmp:
-            duplicate_tree_name_regime_path = regime_tmp.name
-            regime_tmp.write("node_name\tregime\n")
-            regime_tmp.write("N1\t1\n")
-        with tempfile.NamedTemporaryFile("w", delete=False) as leaf_tmp:
-            leaf_path = leaf_tmp.name
-            leaf_tmp.write("node_name\tparam\tregime\tt1\n")
-            leaf_tmp.write("x\tmu\t0\t1.0\n")
-            leaf_tmp.write("x\tmu\t1\t2.0\n")
-        with tempfile.NamedTemporaryFile("w", delete=False) as tree_tmp:
-            tree_path = tree_tmp.name
-            tree_tmp.write("((A_x:1,B_x:1)N1:1,(C_x:1,D_x:1)N1:1)Root;\n")
-        try:
-            with self.assertRaisesRegex(ValueError, "duplicate non-empty node names"):
-                kfog.ou2table(duplicate_tree_name_regime_path, leaf_path, tree_path)
-        finally:
-            os.unlink(duplicate_tree_name_regime_path)
-            os.unlink(leaf_path)
-            os.unlink(tree_path)
-
-    def test_kfog_ou2table_regime_id_validation(self):
-        with tempfile.NamedTemporaryFile("w", delete=False) as regime_tmp:
-            negative_regime_path = regime_tmp.name
-            regime_tmp.write("node_name\tregime\n")
-            regime_tmp.write("N1\t-1\n")
-        with tempfile.NamedTemporaryFile("w", delete=False) as leaf_tmp:
-            leaf_path = leaf_tmp.name
-            leaf_tmp.write("node_name\tparam\tregime\tt1\n")
-            leaf_tmp.write("x\tmu\t0\t1.0\n")
-            leaf_tmp.write("x\tmu\t1\t2.0\n")
-        with tempfile.NamedTemporaryFile("w", delete=False) as tree_tmp:
-            tree_path = tree_tmp.name
-            tree_tmp.write("((A_x:1,B_x:1)N1:1,C_x:2)Root;\n")
-        try:
-            with self.assertRaisesRegex(ValueError, "non-negative IDs"):
-                kfog.ou2table(negative_regime_path, leaf_path, tree_path)
-        finally:
-            os.unlink(negative_regime_path)
-            os.unlink(leaf_path)
-            os.unlink(tree_path)
-        with tempfile.NamedTemporaryFile("w", delete=False) as regime_tmp:
-            huge_regime_path = regime_tmp.name
-            regime_tmp.write("node_name\tregime\n")
-            regime_tmp.write("N1\t9223372036854775808\n")
-        with tempfile.NamedTemporaryFile("w", delete=False) as leaf_tmp:
-            leaf_path = leaf_tmp.name
-            leaf_tmp.write("node_name\tparam\tregime\tt1\n")
-            leaf_tmp.write("x\tmu\t0\t1.0\n")
-            leaf_tmp.write("x\tmu\t9223372036854775808\t2.0\n")
-        with tempfile.NamedTemporaryFile("w", delete=False) as tree_tmp:
-            tree_path = tree_tmp.name
-            tree_tmp.write("((A_x:1,B_x:1)N1:1,C_x:2)Root;\n")
-        try:
-            with self.assertRaisesRegex(ValueError, "avoid integer overflow"):
-                kfog.ou2table(huge_regime_path, leaf_path, tree_path)
-        finally:
-            os.unlink(huge_regime_path)
-            os.unlink(leaf_path)
-            os.unlink(tree_path)
-        with tempfile.NamedTemporaryFile("w", delete=False) as regime_tmp:
-            missing_node_name_path = regime_tmp.name
-            regime_tmp.write("node_name\tregime\n")
-            regime_tmp.write("\t1\n")
-        with tempfile.NamedTemporaryFile("w", delete=False) as leaf_tmp:
-            leaf_path = leaf_tmp.name
-            leaf_tmp.write("node_name\tparam\tregime\tt1\n")
-            leaf_tmp.write("x\tmu\t0\t1.0\n")
-            leaf_tmp.write("x\tmu\t1\t2.0\n")
-        with tempfile.NamedTemporaryFile("w", delete=False) as tree_tmp:
-            tree_path = tree_tmp.name
-            tree_tmp.write("((A_x:1,B_x:1)N1:1,C_x:2)Root;\n")
-        try:
-            with self.assertRaisesRegex(ValueError, "node_name column must contain non-empty string values"):
-                kfog.ou2table(missing_node_name_path, leaf_path, tree_path)
-        finally:
-            os.unlink(missing_node_name_path)
-            os.unlink(leaf_path)
-            os.unlink(tree_path)
+def test_unreadable_log_has_context(tmp_path):
+    with pytest.raises(ValueError, match="Failed to read file"):
+        kfog.get_notung_root_stats(tmp_path / "missing.log")

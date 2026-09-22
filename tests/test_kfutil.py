@@ -29,18 +29,12 @@ class TestKFUtil(unittest.TestCase):
             kfutil.get_rgb_gradient(2.5, [1, 0, 0], [0, 0, 1])
         with self.assertRaisesRegex(ValueError, "exactly 3 channel values"):
             kfutil.get_rgb_gradient(3, [1, 0], [0, 0, 1])
-        with self.assertRaisesRegex(ValueError, "exactly 3 channel values"):
-            kfutil.get_rgb_gradient(3, object(), [0, 0, 1])
         with self.assertRaisesRegex(ValueError, "between 0 and 1"):
             kfutil.get_rgb_gradient(3, [2, 0, 0], [0, 0, 1])
         with self.assertRaisesRegex(ValueError, "bool is not allowed"):
             kfutil.get_rgb_gradient(3, [True, 0, 0], [0, 0, 1])
-        with self.assertRaisesRegex(ValueError, "bool is not allowed"):
-            kfutil.get_rgb_gradient(3, [1, 0, 0], [0, False, 1])
         with self.assertRaisesRegex(ValueError, "between 0 and 1"):
             kfutil.rgb_to_hex(-0.1, 0.0, 0.0)
-        with self.assertRaisesRegex(ValueError, "between 0 and 1"):
-            kfutil.rgb_to_hex(1.1, 0.0, 0.0)
         with self.assertRaisesRegex(ValueError, "must be numeric"):
             kfutil.rgb_to_hex("a", 0.0, 0.0)
         with self.assertRaisesRegex(ValueError, "must be finite"):

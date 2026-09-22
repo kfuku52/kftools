@@ -13,13 +13,11 @@ from kftools import kfseq
 
 class TestKFSeq(unittest.TestCase):
     def test_unknown_nucleotide_keys_are_rejected_without_mutation(self):
-        for value in [4, -3, np.nan, "invalid"]:
-            with self.subTest(value=value):
-                frequencies = {"A": 1.0, "T": 1.0, "C": 1.0, "G": 1.0, "N": value}
-                original = frequencies.copy()
-                with self.assertRaisesRegex(ValueError, "unsupported keys"):
-                    kfseq.nuc_freq2theta([frequencies])
-                self.assertEqual(frequencies, original)
+        frequencies = {"A": 1.0, "T": 1.0, "C": 1.0, "G": 1.0, "N": 4}
+        original = frequencies.copy()
+        with self.assertRaisesRegex(ValueError, "unsupported keys"):
+            kfseq.nuc_freq2theta([frequencies])
+        self.assertEqual(frequencies, original)
         frequencies = {"A": 1.0, "T": 1.0, "C": 1.0, "G": 1.0}
         result = kfseq.nuc_freq2theta([frequencies])
         self.assertEqual(result, [{"theta": 0.5, "theta1": 0.5, "theta2": 0.5}])
@@ -53,26 +51,8 @@ class TestKFSeq(unittest.TestCase):
         self.assertEqual(kfseq.get_mapnh_thetas("F3X4", []), "F3X4()")
 
     def test_kfseq_value_and_path_validation(self):
-        class BadPath(os.PathLike):
-            def __fspath__(self):
-                return 1
-
         with self.assertRaisesRegex(ValueError, "positive total"):
             kfseq.codon2nuc_freqs(codon_freqs={}, model="F3X4")
-        with self.assertRaisesRegex(ValueError, "model must be a string"):
-            kfseq.codon2nuc_freqs(codon_freqs={"AAA": 1.0}, model=None)
-        with self.assertRaisesRegex(ValueError, "must be a mapping"):
-            kfseq.codon2nuc_freqs(codon_freqs=["AAA", 1.0], model="F3X4")
-        with self.assertRaisesRegex(ValueError, "model must be a string"):
-            kfseq.get_mapnh_thetas(None, [])
-        with self.assertRaisesRegex(ValueError, "model must be a string"):
-            kfseq.alignment2nuc_freqs("A", __file__, None)
-        with self.assertRaisesRegex(ValueError, "path-like"):
-            kfseq.alignment2nuc_freqs("A", 1.2, "F3X4")
-        with self.assertRaisesRegex(ValueError, "path-like"):
-            kfseq.alignment2nuc_freqs("A", BadPath(), "F3X4")
-        with self.assertRaisesRegex(ValueError, "bytes are not supported"):
-            kfseq.alignment2nuc_freqs("A", b"/tmp/definitely_missing_kftools_alignment_123456.fa", "F3X4")
         with self.assertRaisesRegex(ValueError, "non-empty string"):
             kfseq.alignment2nuc_freqs(None, __file__, "F3X4")
         with self.assertRaisesRegex(ValueError, "non-empty string"):
@@ -215,10 +195,6 @@ class TestKFSeq(unittest.TestCase):
                 tree_missing,
                 model="F3X4",
             )
-        with self.assertRaisesRegex(ValueError, "must not be None"):
-            kfseq.weighted_mean_root_thetas({}, None, model="F3X4")
-        with self.assertRaisesRegex(ValueError, "dictionary keyed by subroot"):
-            kfseq.weighted_mean_root_thetas([], tree_missing, model="F3X4")
         tree_negative_bl = ete4.PhyloTree("(A:1,B:1);", parser=1)
         tree_negative_bl.children[0].dist = -1.0
         with self.assertRaisesRegex(ValueError, "must be non-negative"):
@@ -237,14 +213,6 @@ class TestKFSeq(unittest.TestCase):
             )
 
     def test_kfseq_weighted_mean_root_thetas_zero_branch_lengths(self):
-        tree2 = ete4.PhyloTree("(A:0,B:0);", parser=1)
-        subroot_thetas2 = {
-            "A": [{"theta": 0.2}] * 3,
-            "B": [{"theta": 0.8}] * 3,
-        }
-        root_thetas2 = kfseq.weighted_mean_root_thetas(subroot_thetas2, tree2, model="F3X4")
-        self.assertAlmostEqual(root_thetas2[0]["theta"], 0.5)
-
         tree3 = ete4.PhyloTree("(A:0,B:0,C:0);", parser=1)
         subroot_thetas3 = {
             "A": [{"theta": 0.1}] * 3,

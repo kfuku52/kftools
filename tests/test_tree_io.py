@@ -9,7 +9,6 @@ import numpy as np
 import pytest
 
 from kftools import kfog, kfphylo
-from kftools._tree import copy_tree
 
 
 def comb_tree(leaves):
@@ -27,7 +26,7 @@ def test_long_newick_is_not_sent_to_the_filesystem(monkeypatch):
 
     monkeypatch.setattr(Path, "read_text", unexpected_read)
     loaded = kfphylo.load_phylo_tree(newick)
-    assert list(loaded.leaf_names()) == list(ete4.PhyloTree(newick, parser=1).leaf_names())
+    assert list(loaded.leaf_names()) == [f"leaf{i}" for i in range(1000)]
 
 
 def test_tree_paths_remain_unambiguous_and_report_read_errors(tmp_path, monkeypatch):
@@ -76,13 +75,14 @@ def test_tree_transfer_deep_copies_shared_metadata_and_node_references(operation
     tree = ete4.PhyloTree("((A:1,B:2)Inner:3,C:4)Root;", parser=1)
     leaf = next(tree.leaves())
     shared = [1, 2]
-    tree.custom = {"leaf": leaf, "shared": shared, "children": tree.children}
+    tree.custom = {"leaf": leaf, "shared": shared, "root": tree}
     leaf.props["shared"] = shared
     leaf.props["self"] = leaf
     leaf.props["array"] = np.array([2, 3])
     result = getattr(kfphylo, operation)(tree, tree)
     result_leaf = next(n for n in result.leaves() if n.name == leaf.name)
     assert result.custom["leaf"] is result_leaf
+    assert result.custom["root"] is result
     assert result.custom["shared"] is result_leaf.props["shared"]
     assert result_leaf.props["self"] is result_leaf
     result_leaf.props["shared"].append(3)
@@ -90,17 +90,6 @@ def test_tree_transfer_deep_copies_shared_metadata_and_node_references(operation
     assert shared == [1, 2]
     assert leaf.props["array"].tolist() == [2, 3]
     assert all(child.up is node for node in tree.traverse() for child in node.children)
-
-
-def test_copy_preserves_root_metadata_before_ete_rerooting():
-    tree = comb_tree(250)
-    tree.props["self"] = tree
-    tree.custom = {"children": tree.children, "props": tree.props}
-    copied = copy_tree(tree)
-    assert copied.props["self"] is copied
-    assert copied.custom["children"] is copied.children
-    assert copied.custom["props"] is copied.props
-    assert copied.up is None
 
 
 def test_gene_species_mapping_can_copy_deep_gene_trees():

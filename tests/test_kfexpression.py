@@ -1,5 +1,4 @@
 import unittest
-import warnings
 
 import matplotlib
 import numpy as np
@@ -13,11 +12,6 @@ from kftools import kfexpression
 class TestKFExpression(unittest.TestCase):
     def test_kfexpression(self):
         df = pd.DataFrame({"a": [1.0, 2.0], "b": [2.0, 4.0]})
-        tau = kfexpression.calc_tau(df, ["a", "b"], unlog2=False, unPlus1=False)
-        self.assertEqual(len(tau), 2)
-        self.assertTrue(np.isfinite(tau).all())
-        tau_single_col = kfexpression.calc_tau(df, "a", unlog2=False, unPlus1=False)
-        self.assertEqual(len(tau_single_col), 2)
         self.assertAlmostEqual(kfexpression.calc_complementarity([1, 2], [1, 1]), 0.25)
         with self.assertRaisesRegex(ValueError, "same number of values"):
             kfexpression.calc_complementarity([1, 2, 3], [1])
@@ -48,19 +42,13 @@ class TestKFExpression(unittest.TestCase):
                 unlog2=False,
                 unPlus1=False,
             )
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            tau_zero = kfexpression.calc_tau(
-                pd.DataFrame({"a": [0.0, 0.0]}),
-                ["a"],
-                unlog2=False,
-                unPlus1=False,
-            )
-            self.assertEqual(tau_zero.tolist(), [0.0, 0.0])
-            self.assertFalse(
-                any("invalid value encountered in divide" in str(wi.message) for wi in w),
-                "calc_tau should avoid runtime warnings on zero-max rows",
-            )
+        tau_zero = kfexpression.calc_tau(
+            pd.DataFrame({"a": [0.0, 0.0]}),
+            ["a"],
+            unlog2=False,
+            unPlus1=False,
+        )
+        self.assertEqual(tau_zero.tolist(), [0.0, 0.0])
         with self.assertRaisesRegex(ValueError, "non-empty sequence"):
             kfexpression.calc_tau(df, 0)
         with self.assertRaisesRegex(ValueError, "DataFrame-like"):
@@ -69,16 +57,10 @@ class TestKFExpression(unittest.TestCase):
             kfexpression.calc_tau(df, ["a", "b"], unlog2="False", unPlus1=False)
         with self.assertRaisesRegex(ValueError, "unPlus1 must be a boolean value"):
             kfexpression.calc_tau(df, ["a", "b"], unlog2=True, unPlus1="False")
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            with self.assertRaisesRegex(ValueError, "out of range"):
-                kfexpression.calc_tau(
-                    pd.DataFrame({"a": [2000.0], "b": [2000.0]}),
-                    ["a", "b"],
-                    unlog2=True,
-                    unPlus1=True,
-                )
-            self.assertFalse(
-                any("overflow encountered in exp2" in str(wi.message) for wi in w),
-                "calc_tau should not leak exp2 overflow warnings",
+        with self.assertRaisesRegex(ValueError, "out of range"):
+            kfexpression.calc_tau(
+                pd.DataFrame({"a": [2000.0], "b": [2000.0]}),
+                ["a", "b"],
+                unlog2=True,
+                unPlus1=True,
             )

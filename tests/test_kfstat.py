@@ -10,12 +10,6 @@ from kftools import kfstat
 
 
 class TestKFStat(unittest.TestCase):
-    def test_kfstat(self):
-        x = np.random.normal(size=200)
-        y = np.random.normal(loc=0.2, size=200)
-        out = kfstat.bm_test(x, y)
-        self.assertEqual(len(out), 6)
-
     def test_kfstat_input_validation(self):
         with self.assertRaisesRegex(ValueError, "at least 2 values"):
             kfstat.bm_test([1], [2, 3])

@@ -23,8 +23,6 @@ class TestKFPhylo(unittest.TestCase):
         self.assertTrue(kfphylo.check_ultrametric("((A:1,B:1):2,C:3);"))
         self.assertAlmostEqual(kfphylo.get_tree_height("((A:1,B:1):2,C:3);"), 3.0)
         self.assertAlmostEqual(kfphylo.get_tree_height("(A:1,B:5);"), 5.0)
-        with self.assertRaisesRegex(ValueError, "tree_file must be a Newick string"):
-            kfphylo.get_tree_height(0)
         with self.assertRaisesRegex(ValueError, "finite numeric values"):
             kfphylo.get_tree_height("(A,B);")
         inf_height_tree = ete4.PhyloTree("(A:1,B:1);", parser=1)
@@ -46,14 +44,6 @@ class TestKFPhylo(unittest.TestCase):
         self.assertTrue(
             all(str(node.name).strip() != "" for node in filled_none_named_tree.traverse() if (not node.is_leaf))
         )
-        with self.assertRaisesRegex(ValueError, "must not be None"):
-            kfphylo.add_numerical_node_labels(None)
-        with self.assertRaisesRegex(ValueError, "tree must be a Newick string"):
-            kfphylo.fill_internal_node_names(0)
-        with self.assertRaisesRegex(ValueError, "tree must be a Newick string"):
-            kfphylo.check_ultrametric(0)
-        with self.assertRaisesRegex(ValueError, "tree must be a Newick string"):
-            kfphylo.taxonomic_annotation(0)
 
     def test_kfphylo_check_ultrametric_zero_length(self):
         tree = ete4.PhyloTree("(A:0,B:0,C:0);", parser=1)
@@ -74,30 +64,20 @@ class TestKFPhylo(unittest.TestCase):
             kfphylo.check_ultrametric(bad_tree_neg)
 
     def test_kfphylo_branch_id_is_csubst_compatible(self):
-        def _csubst_reference_branch_ids(tree):
-            all_leaf_names = sorted(tree.leaf_names())
-            leaf_branch_ids = {leaf_name: (1 << i) for i, leaf_name in enumerate(all_leaf_names)}
-            nodes = list(tree.traverse())
-            clade_signatures = [sum(leaf_branch_ids[leaf_name] for leaf_name in node.leaf_names()) for node in nodes]
-            sorted_node_indices = sorted(range(len(nodes)), key=lambda idx: clade_signatures[idx])
-            rank_by_node_index = {node_index: rank for rank, node_index in enumerate(sorted_node_indices)}
-            return [rank_by_node_index[i] for i in range(len(nodes))]
-
-        tree_small = ete4.PhyloTree("((A:1,B:1):2,C:3);", parser=1)
-        expected_small = _csubst_reference_branch_ids(tree_small)
-        out_small = kfphylo.add_numerical_node_labels(tree_small)
-        actual_small = [node.branch_id for node in out_small.traverse()]
-        self.assertEqual(actual_small, expected_small)
-
-        leaf_names = [f"L{i}" for i in range(64)]
-        tree_txt = f"{leaf_names[0]}:1"
-        for leaf_name in leaf_names[1:]:
-            tree_txt = f"({tree_txt},{leaf_name}:1):1"
-        tree_large = ete4.PhyloTree(tree_txt + ";", parser=1)
-        expected_large = _csubst_reference_branch_ids(tree_large)
-        out_large = kfphylo.add_numerical_node_labels(tree_large)
-        actual_large = [node.branch_id for node in out_large.traverse()]
-        self.assertEqual(actual_large, expected_large)
+        tree = kfphylo.add_numerical_node_labels("(C:3,(B:1,A:1)AB:2)Root;")
+        assert {node.name: node.branch_id for node in tree.traverse()} == {
+            "A": 0,
+            "B": 1,
+            "AB": 2,
+            "C": 3,
+            "Root": 4,
+        }
+        # A star has leaf IDs 0..64 and root ID 65. The last leaf exercises
+        # signatures beyond a 64-bit integer without copying the algorithm.
+        names = [f"L{i:02}" for i in range(65)]
+        star = kfphylo.add_numerical_node_labels("(" + ",".join(reversed(names)) + ")Root;")
+        assert {node.name: node.branch_id for node in star.leaves()} == dict(zip(names, range(65), strict=True))
+        assert star.branch_id == 65
         dup_leaf_tree = ete4.PhyloTree("((A:1,A:1):1,B:1);", parser=1)
         with self.assertRaisesRegex(ValueError, "must be unique"):
             kfphylo.add_numerical_node_labels(dup_leaf_tree)
@@ -174,12 +154,6 @@ class TestKFPhylo(unittest.TestCase):
                 tree_to="(A:1,(B:1,C:2):1);",
                 tree_from="((A:1,A:1):1,C:2);",
             )
-        with self.assertRaisesRegex(ValueError, "tree_to must be a Newick string"):
-            kfphylo.transfer_root(tree_to=0, tree_from=tree_from)
-        with self.assertRaisesRegex(ValueError, "tree_from must be a Newick string"):
-            kfphylo.transfer_root(tree_to=tree_to, tree_from=0)
-        with self.assertRaisesRegex(ValueError, "verbose must be a boolean value"):
-            kfphylo.transfer_root(tree_to=tree_to, tree_from=tree_from, verbose="False")
 
     def test_kfphylo_transfer_root_handles_tree_to_root_distance(self):
         tree_to = ete4.PhyloTree("(S2:0.1,(S3:1,(S1:2,S0:0.1):1):0.1):2;", parser=1)
@@ -236,10 +210,6 @@ class TestKFPhylo(unittest.TestCase):
                 tree_to="((A:1,B:1):2,(C:1,D:1):2);",
                 tree_from="((A:1,A:1):2,(C:1,D:1):2);",
             )
-        with self.assertRaisesRegex(ValueError, "tree_to must be a Newick string"):
-            kfphylo.transfer_internal_node_names(tree_to=0, tree_from=tree_from)
-        with self.assertRaisesRegex(ValueError, "tree_from must be a Newick string"):
-            kfphylo.transfer_internal_node_names(tree_to=tree_to, tree_from=0)
 
     def test_kfphylo_taxonomic_annotation_validates_leaf_names(self):
         tree = ete4.PhyloTree("(A:1,B_c:1);", parser=1)

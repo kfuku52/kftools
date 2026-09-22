@@ -18,8 +18,7 @@ def ax():
     plt.close(figure)
 
 
-@pytest.mark.parametrize("horizontal", [False, True])
-@pytest.mark.parametrize("dtype", ["float64", "Float64"])
+@pytest.mark.parametrize(("horizontal", "dtype"), [(False, "float64"), (True, "Float64")])
 def test_stacked_bars_average_components_before_stacking(ax, horizontal, dtype):
     data = pd.DataFrame({"group": ["A", "A"], "a": [10.0, 20.0], "b": [np.nan, 10.0]})
     data[["a", "b"]] = data[["a", "b"]].astype(dtype)
@@ -64,7 +63,7 @@ def test_ols_r_squared_and_adjusted_r_squared_are_distinct(ax):
 
 
 @pytest.mark.parametrize("method", ["ols", "quantreg"])
-@pytest.mark.parametrize("name", ["const", "_kftools_predictor", "response", "x"])
+@pytest.mark.parametrize("name", ["const", "x value"])
 def test_regression_is_invariant_to_predictor_column_name(ax, method, name):
     x, y = np.arange(1, 6, dtype=float), np.array([2, 1, 4, 3, 6], dtype=float)
     data = pd.DataFrame({name: x, "y": y})

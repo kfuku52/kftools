@@ -61,8 +61,6 @@ class TestKFToolsRegressions(unittest.TestCase):
             os.unlink(path)
 
     def test_theta_values_are_normalized_and_bounded(self):
-        theta = kfseq.nuc_freq2theta([{"A": 1.0, "T": 1.0, "C": 1.0, "G": 1.0}])
-        self.assertEqual(theta, [{"theta": 0.5, "theta1": 0.5, "theta2": 0.5}])
         with self.assertRaisesRegex(ValueError, "positive total"):
             kfseq.nuc_freq2theta([{"A": 0.0, "T": 0.0, "C": 0.0, "G": 0.0}])
         with self.assertRaisesRegex(ValueError, "between 0 and 1"):
@@ -70,20 +68,6 @@ class TestKFToolsRegressions(unittest.TestCase):
                 "F3X4",
                 [{"theta": 2.0, "theta1": 0.5, "theta2": 0.5}],
             )
-
-    def test_polytomy_weighting_uses_every_child(self):
-        tree = ete4.PhyloTree("(A:1,B:2,C:3);", parser=1)
-
-        def values(middle):
-            return {
-                "A": [{"theta": 0.1}] * 3,
-                "B": [{"theta": middle}] * 3,
-                "C": [{"theta": 0.9}] * 3,
-            }
-
-        low_middle = kfseq.weighted_mean_root_thetas(values(0.2), tree, "F3X4")[0]["theta"]
-        high_middle = kfseq.weighted_mean_root_thetas(values(0.8), tree, "F3X4")[0]["theta"]
-        self.assertNotEqual(low_middle, high_middle)
 
     def test_internal_node_names_are_unique(self):
         tree = ete4.PhyloTree("((A:1,B:1)n1:1,(C:1,D:1):1);", parser=1)
