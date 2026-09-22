@@ -4,6 +4,8 @@ import numpy as np
 import pandas as pd
 from numpy.typing import ArrayLike, NDArray
 
+from ._validation import validate_boolean_flag as _validate_boolean_flag
+
 
 def calc_complementarity(array1: ArrayLike, array2: ArrayLike) -> float:
     """Return the mean relative difference between two non-negative profiles.
@@ -96,11 +98,10 @@ def calc_tau(
     in that mode. For log2(expression), use ``unlog2=True, unPlus1=False``.
     Selected values must be finite. The input dataframe is not modified.
     """
-    for flag_name, flag_value in [("unlog2", unlog2), ("unPlus1", unPlus1)]:
-        if not isinstance(flag_value, (bool, np.bool_)):
-            raise ValueError(f"{flag_name} must be a boolean value")
+    unlog2 = _validate_boolean_flag(unlog2, "unlog2")
+    unPlus1 = _validate_boolean_flag(unPlus1, "unPlus1")
     columns = _validate_tau_columns(df, columns)
-    x = _prepare_tau_matrix(df, columns, bool(unlog2), bool(unPlus1))
+    x = _prepare_tau_matrix(df, columns, unlog2, unPlus1)
     if x.shape[1] == 1:
         return np.zeros(x.shape[0], dtype=float)
     xmax = x.max(axis=1).reshape(x.shape[0], 1)

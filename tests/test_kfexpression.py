@@ -10,6 +10,25 @@ from kftools import kfexpression
 
 
 class TestKFExpression(unittest.TestCase):
+    def test_tau_accepts_numpy_boolean_flags_without_mutating_input(self):
+        df = pd.DataFrame({"a": [0.0, 1.0, 3.0], "b": [0.0, 2.0, 1.0]})
+        original = df.copy(deep=True)
+        for unlog2 in (False, True):
+            for unPlus1 in (False, True):
+                with self.subTest(unlog2=unlog2, unPlus1=unPlus1):
+                    expected = kfexpression.calc_tau(df, ["a", "b"], unlog2, unPlus1)
+                    actual = kfexpression.calc_tau(df, ["a", "b"], np.bool_(unlog2), np.bool_(unPlus1))
+                    np.testing.assert_array_equal(actual, expected)
+                    self.assertEqual(actual.dtype, expected.dtype)
+        pd.testing.assert_frame_equal(df, original)
+
+    def test_tau_validates_flags_before_columns(self):
+        for unlog2, unPlus1, invalid_flag in [(0, 0, "unlog2"), (False, 0, "unPlus1")]:
+            with self.subTest(invalid_flag=invalid_flag):
+                with self.assertRaises(ValueError) as error:
+                    kfexpression.calc_tau(None, [], unlog2, unPlus1)
+                self.assertEqual(str(error.exception), f"{invalid_flag} must be a boolean value")
+
     def test_kfexpression(self):
         df = pd.DataFrame({"a": [1.0, 2.0], "b": [2.0, 4.0]})
         self.assertAlmostEqual(kfexpression.calc_complementarity([1, 2], [1, 1]), 0.25)
