@@ -12,6 +12,32 @@ from kftools import kfseq
 
 
 class TestKFSeq(unittest.TestCase):
+    def test_mapnh_theta_rendering_preserves_order_and_numeric_text(self):
+        # Deliberately insert keys in a different order from the model output.
+        thetas = [
+            {"theta2": -0.0, "theta1": 1, "theta": 0.25},
+            {"theta1": 0.5, "theta": 1e-09, "theta2": 0.75},
+            {"theta2": 1.0, "theta": 0, "theta1": 0.125},
+        ]
+        original = [theta.copy() for theta in thetas]
+        for container in (list, tuple):
+            with self.subTest(container=container):
+                self.assertEqual(
+                    kfseq.get_mapnh_thetas("GY+F1X4+G4", container(thetas[:1])),
+                    "F1X4(Full.theta=0.25,Full.theta1=1,Full.theta2=-0.0)",
+                )
+                self.assertEqual(
+                    kfseq.get_mapnh_thetas("GY+F3X4+G4", container(thetas)),
+                    "F3X4(1_Full.theta=0.25,1_Full.theta1=1,1_Full.theta2=-0.0,"
+                    "2_Full.theta=1e-09,2_Full.theta1=0.5,2_Full.theta2=0.75,"
+                    "3_Full.theta=0,3_Full.theta1=0.125,3_Full.theta2=1.0)",
+                )
+        self.assertEqual(thetas, original)
+        for model in ("F1X4", "F3X4"):
+            for empty in (None, [], ()):
+                with self.subTest(model=model, empty=empty):
+                    self.assertEqual(kfseq.get_mapnh_thetas(model, empty), model + "()")
+
     def test_unknown_nucleotide_keys_are_rejected_without_mutation(self):
         frequencies = {"A": 1.0, "T": 1.0, "C": 1.0, "G": 1.0, "N": 4}
         original = frequencies.copy()

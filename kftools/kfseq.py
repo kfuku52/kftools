@@ -171,18 +171,10 @@ def get_mapnh_thetas(model: str, thetas: Sequence[dict[str, float]] | None) -> s
     expected_count = 1 if frequency_model == "F1X4" else len(CODON_POSITIONS)
     if len(thetas) not in (0, expected_count):
         raise ValueError(f"{frequency_model} requires either 0 or {expected_count} theta entries; got {len(thetas)}")
-    values = []
+    values: list[str] = []
     for i, theta in enumerate(thetas):
-        if len(thetas) == 1:
-            values.append("Full.theta=" + str(theta["theta"]))
-            values.append("Full.theta1=" + str(theta["theta1"]))
-            values.append("Full.theta2=" + str(theta["theta2"]))
-        else:
-            values.append(str(i + 1) + "_Full.theta=" + str(theta["theta"]))
-            values.append(str(i + 1) + "_Full.theta1=" + str(theta["theta1"]))
-            values.append(str(i + 1) + "_Full.theta2=" + str(theta["theta2"]))
-    if len(values) == 0:
-        return model_frequency + "()"
+        prefix = "Full." if len(thetas) == 1 else str(i + 1) + "_Full."
+        values.extend(prefix + parameter + "=" + str(theta[parameter]) for parameter in ("theta", "theta1", "theta2"))
     return model_frequency + "(" + ",".join(values) + ")"
 
 
