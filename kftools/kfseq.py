@@ -1,5 +1,4 @@
 import numbers
-import re
 from collections.abc import Mapping, Sequence
 
 import numpy as np
@@ -21,23 +20,25 @@ def _validate_model_string(model):
 
 
 def _frequency_model_kind(model):
-    has_f1x4 = "F1X4" in model
-    has_f3x4 = "F3X4" in model
-    if has_f1x4 == has_f3x4:
+    tokens = [token.strip() for token in model.split("+")]
+    frequency_tokens = [token for token in tokens if token in {"F1X4", "F3X4"}]
+    if len(frequency_tokens) != 1:
         raise ValueError("model must contain exactly one of 'F1X4' or 'F3X4'")
-    return "F1X4" if has_f1x4 else "F3X4"
+    return frequency_tokens[0]
 
 
 def _normalize_nucleotide_frequencies(freqs):
-    scale_factor = sum(freqs.values())
-    if (not np.isfinite(scale_factor)) or (scale_factor <= 0):
+    maximum = max((float(value) for value in freqs.values()), default=0.0)
+    if maximum <= 0:
         raise ValueError("Nucleotide frequencies must have a positive total")
+    scaled = {nuc: float(value) / maximum for nuc, value in freqs.items()}
+    scale_factor = sum(scaled.values())
     for nuc in freqs:
-        freqs[nuc] = freqs[nuc] / scale_factor
+        freqs[nuc] = scaled[nuc] / scale_factor
 
 
 def _canonicalize_codon_frequencies(codon_freqs):
-    canonicalized: dict[str, float] = {}
+    validated = []
     for codon, codon_freq in codon_freqs.items():
         if (not isinstance(codon, str)) or (len(codon) != CODON_LENGTH):
             raise ValueError("codon_freqs keys must be codon strings of length 3")
@@ -52,7 +53,14 @@ def _canonicalize_codon_frequencies(codon_freqs):
         invalid_nucleotides = sorted(set(codon_upper) - set(NUCLEOTIDES))
         if len(invalid_nucleotides) > 0:
             raise ValueError(f"codon '{codon}' contains invalid nucleotides: {invalid_nucleotides}")
-        canonicalized[codon_upper] = canonicalized.get(codon_upper, 0) + codon_freq
+        validated.append((codon_upper, codon_freq))
+    # Scale before merging case aliases or accumulating nucleotide counts.
+    maximum = max((value for _, value in validated), default=0.0)
+    if maximum <= 0:
+        raise ValueError("Nucleotide frequencies must have a positive total")
+    canonicalized: dict[str, float] = {}
+    for codon_upper, codon_freq in validated:
+        canonicalized[codon_upper] = canonicalized.get(codon_upper, 0) + codon_freq / maximum
     return canonicalized
 
 
@@ -165,9 +173,6 @@ def get_mapnh_thetas(model: str, thetas: Sequence[dict[str, float]] | None) -> s
     if not isinstance(thetas, (list, tuple)):
         raise ValueError("thetas must be a list or tuple of theta dictionaries")
     _validate_theta_entries(thetas)
-    model_frequency = model
-    model_frequency = re.sub(r"X4\+.*", "X4", model_frequency)
-    model_frequency = re.sub(r".*\+F", "F", model_frequency)
     expected_count = 1 if frequency_model == "F1X4" else len(CODON_POSITIONS)
     if len(thetas) not in (0, expected_count):
         raise ValueError(f"{frequency_model} requires either 0 or {expected_count} theta entries; got {len(thetas)}")
@@ -175,7 +180,7 @@ def get_mapnh_thetas(model: str, thetas: Sequence[dict[str, float]] | None) -> s
     for i, theta in enumerate(thetas):
         prefix = "Full." if len(thetas) == 1 else str(i + 1) + "_Full."
         values.extend(prefix + parameter + "=" + str(theta[parameter]) for parameter in ("theta", "theta1", "theta2"))
-    return model_frequency + "(" + ",".join(values) + ")"
+    return frequency_model + "(" + ",".join(values) + ")"
 
 
 def _read_target_fasta_sequence(alignment_file, leaf_name):

@@ -104,7 +104,10 @@ def get_tree_height(tree_file: TreeSource) -> float:
                 raise ValueError("Tree branch lengths must be finite numeric values")
             if child_dist < 0:
                 raise ValueError("Tree branch lengths must be non-negative")
-            stack.append((child, distance_from_root + child_dist))
+            child_distance = distance_from_root + child_dist
+            if not np.isfinite(child_distance):
+                raise ValueError("Root-to-tip distances must be finite; branch length sum overflowed")
+            stack.append((child, child_distance))
     return max_root_to_tip_distance
 
 
@@ -463,7 +466,10 @@ def _root_to_tip_extrema(tree):
         else:
             for child in node.get_children():
                 child_dist = _validated_branch_distance(child.dist, "All branch lengths")
-                stack.append((child, distance_from_root + child_dist))
+                child_distance = distance_from_root + child_dist
+                if not np.isfinite(child_distance):
+                    raise ValueError("Root-to-tip distances must be finite; branch length sum overflowed")
+                stack.append((child, child_distance))
     if np.isinf(min_dist):
         min_dist = 0.0
         max_dist = 0.0

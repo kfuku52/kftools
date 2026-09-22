@@ -27,7 +27,10 @@ from kftools import kfexpression, kfog, kfphylo, kfplot, kfseq
     ],
 )
 def test_delta_preserves_exact_integer_differences(dtype, values, expected):
-    data = pd.DataFrame({"branch_id": [0, 1], "parent": [-1, 0], "v": pd.Series(values, dtype=dtype)})
+    # Older pandas/NumPy on Linux infer float64 from a list containing uint64
+    # maxima. Construct typed values first so the fixture itself is lossless.
+    typed_values = np.asarray(values, dtype=dtype.lower())
+    data = pd.DataFrame({"branch_id": [0, 1], "parent": [-1, 0], "v": pd.Series(typed_values, dtype=dtype)})
     before = data.copy(deep=True)
     result = kfog.compute_delta(data, "v")
     assert pd.isna(result.loc[0, "delta_v"])
@@ -127,3 +130,27 @@ def test_internal_name_transfer_checks_single_tip_identity():
     with pytest.raises(ValueError, match="identical tips"):
         kfphylo.transfer_internal_node_names("A;", "B;")
     assert kfphylo.transfer_internal_node_names("A;", "A;").name == "A"
+
+
+@pytest.mark.parametrize("hue_log", [False, True])
+def test_density_scatter_excludes_out_of_range_points_before_binning(hue_log):
+    ax = kfplot.density_scatter(
+        [0, 1, 2, 1e308, -1e308, 0.5, 0.5],
+        [0, 1, 0.5, 0.5, 0.5, 2, -1],
+        plot_range=[0, 1, 0, 1],
+        cor=False,
+        cbar=False,
+        hue_log=hue_log,
+    )
+    try:
+        np.testing.assert_array_equal(ax.lines[0].get_xdata(), [0, 1])
+        np.testing.assert_array_equal(ax.lines[0].get_ydata(), [0, 1])
+    finally:
+        plt.close(ax.figure)
+
+
+@pytest.mark.parametrize("operation", [kfphylo.get_tree_height, kfphylo.check_ultrametric])
+@pytest.mark.parametrize("tree", ["((A:1e308,B:1e308):1e308,C:1e308);", "((A:1e308,B:1e308):1e308);"])
+def test_tree_distance_overflow_is_rejected(operation, tree):
+    with pytest.raises(ValueError, match="Root-to-tip distances must be finite"):
+        operation(tree)

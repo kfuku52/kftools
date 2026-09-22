@@ -381,18 +381,19 @@ def _density_histogram(xval, yval, bounds, num_bin, hue_log):
     bins = [num_bin, num_bin]
     threshold = np.log2(3) if hue_log else 3
     xyrange = [[xmin, xmax], [ymin, ymax]]
-    histogram, _, _ = np.histogram2d(xval, yval, range=xyrange, bins=bins)
+    in_range = (xval >= xmin) & (xval <= xmax) & (yval >= ymin) & (yval <= ymax)
+    xval, yval = xval[in_range], yval[in_range]
+    histogram, x_edges, y_edges = np.histogram2d(xval, yval, range=xyrange, bins=bins)
     if hue_log:
         with np.errstate(divide="ignore"):
             histogram = np.log2(histogram)
-    x_idx = np.floor((xval - xmin) * bins[0] / (xmax - xmin)).astype(int)
-    y_idx = np.floor((yval - ymin) * bins[1] / (ymax - ymin)).astype(int)
+    x_idx = np.searchsorted(x_edges, xval, side="right") - 1
+    y_idx = np.searchsorted(y_edges, yval, side="right") - 1
     x_idx = np.minimum(x_idx, bins[0] - 1)
     y_idx = np.minimum(y_idx, bins[1] - 1)
-    in_range = (x_idx >= 0) & (x_idx < bins[0]) & (y_idx >= 0) & (y_idx < bins[1])
-    point_density = histogram[x_idx[in_range], y_idx[in_range]]
+    point_density = histogram[x_idx, y_idx]
     low_density = point_density < threshold
-    low_x, low_y = xval[in_range][low_density], yval[in_range][low_density]
+    low_x, low_y = xval[low_density], yval[low_density]
     histogram[histogram < threshold] = np.nan
     return xyrange, histogram, low_x, low_y
 

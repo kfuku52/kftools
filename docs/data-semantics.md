@@ -27,7 +27,8 @@ from zero (identical profiles) to one; input arrays are not modified.
 ## Sequence frequencies and theta parameters
 
 Model strings must contain exactly one of the case-sensitive tokens `F1X4` or
-`F3X4`, optionally within a larger model string such as `GY+F3X4`.
+`F3X4`, as a complete `+`-separated component, optionally within a larger model string
+such as `GY+F3X4`. Repeated frequency components are rejected.
 
 | Function | F1X4 | F3X4 |
 | --- | --- | --- |
@@ -47,7 +48,8 @@ model and structural inputs; they do not fall back to F3X4. The FASTA reader
 locates the selected sequence first, but only the F3X4 path validates its
 alphabet and codon length. `codon2nuc_freqs` accepts lowercase codons,
 but every codon must contain exactly three A/T/C/G bases. Frequencies must be
-finite and non-negative with a positive total.
+finite and non-negative with a positive total. Frequency normalization scales
+values before accumulation to avoid overflow and loss of tiny codon counts.
 
 `nuc_freq2theta` accepts a list or tuple of dictionaries with exactly the keys
 `A`, `T`, `C`, and `G`. Each dictionary is normalized without changing the input.
@@ -74,7 +76,8 @@ the path does not exist. Unsupported types such as numbers raise `TypeError`;
 The default ETE parser is `1` (internal node names). `nwk2table(attr="support")`
 uses parser `0` for strings and paths; an already supplied tree is not reparsed.
 Distance calculations require explicit finite, non-negative non-root branch
-lengths. Heights and node ages retain the input branch-length unit; they are
+lengths. Root-to-tip sums that overflow raise `ValueError` in
+`get_tree_height` and `check_ultrametric`. Heights and node ages retain the input branch-length unit; they are
 not converted to years or substitutions. `nwk2table(age=True, attr="dist")`
 measures age backward from the tips (tip age zero), not depth from the root.
 `check_ultrametric` defaults to `tol=0`, so its comparison is exact;
@@ -223,6 +226,10 @@ labels, and unused categorical levels are omitted. Pass a list of component
 columns on `y` for vertical bars or on `x` for horizontal bars; the other axis
 is the category column. `colors` and `ax` are required arguments but accept
 `None` for default colors and a new axis.
+
+An explicit `density_scatter` plot range excludes points outside its inclusive
+bounds from the displayed histogram and point overlay; correlations and GLM
+fitting still use all retained observations.
 
 `density_scatter` returns an axis unless `return_ims=True`, which returns its
 `AxesImage`. `hue_log=True` applies log2 to bin counts. With a GLM family whose
