@@ -144,5 +144,4 @@ The remaining log readers accept plain text:
 
 The dictionary log readers return only recognized fields; an empty dictionary
 does not certify a valid or successful upstream run. Check that required output
-keys exist. Read errors raise `ValueError`; a known exception for truncated
-gzip files is recorded in the [0.6.7 audit](documentation-audit-0.6.7.md#b-unresolved-reader-error).
+keys exist. Read errors, including truncated gzip streams, raise `ValueError`.

@@ -979,7 +979,7 @@ def get_iqtree_model_stats(file: PathInput) -> dict[str, str]:
                     out["iqtree_best_BIC"] = decoded.replace("best_model_BIC: ", "").replace("\n", "")
     except UnicodeDecodeError as exc:
         raise ValueError(f"gzip file must contain UTF-8 text: {file}") from exc
-    except OSError as exc:
+    except (OSError, EOFError) as exc:
         raise ValueError(f"file is not a readable gzip file: {file}") from exc
     return out
 

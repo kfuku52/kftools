@@ -15,6 +15,16 @@ matplotlib.use("Agg")
 from kftools import kfog, kfphylo
 
 
+@pytest.mark.parametrize("cut", [2, 12, -4], ids=["header", "payload", "trailer"])
+def test_iqtree_truncated_gzip_raises_value_error(tmp_path, cut):
+    path = tmp_path / "truncated.model.gz"
+    path.write_bytes(gzip.compress(b"best_model_AIC: GTR\n")[:cut])
+    with pytest.raises(ValueError, match="not a readable gzip file") as error:
+        kfog.get_iqtree_model_stats(path)
+    assert str(path) in str(error.value)
+    assert isinstance(error.value.__cause__, EOFError)
+
+
 class TestKFOG(unittest.TestCase):
     def test_kfog(self):
         newick = "((A_a:1,B_b:1):1,C_c:2);"

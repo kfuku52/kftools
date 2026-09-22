@@ -39,6 +39,11 @@ separate documentation generator/build configured.
 
 ## B: unresolved reader error
 
+**Resolved in 0.6.8:** `get_iqtree_model_stats` now wraps `EOFError` in
+`ValueError`, preserving the original exception as its cause. Regression tests
+cover truncated headers, compressed payloads, and trailers. The account below
+records the original 0.6.7 finding.
+
 [File formats](file-formats.md#iq-tree-and-other-logs) promises `ValueError` for
 read errors. A truncated gzip checkpoint instead raises `EOFError` from
 [`kfog.get_iqtree_model_stats`](../kftools/kfog.py). Its handler catches `UnicodeDecodeError` and
