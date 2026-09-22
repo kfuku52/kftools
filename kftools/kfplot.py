@@ -634,7 +634,7 @@ def _hist_categories_and_colors(df, category, colors):
     category_values = list(df[category].dropna().drop_duplicates())
     if not category_values:
         raise ValueError(f"category column '{category}' must contain at least one non-NaN value")
-    if isinstance(colors, dict) and colors:
+    if isinstance(colors, Mapping) and colors:
         observed = df[category].dropna().tolist()
         unknown = [category_value for category_value in colors if category_value not in observed]
         if unknown:
@@ -643,7 +643,9 @@ def _hist_categories_and_colors(df, category, colors):
 
 
 def _hist_category_color(colors, category_value, index):
-    if isinstance(colors, dict):
+    if isinstance(colors, str):
+        return colors
+    if isinstance(colors, Mapping):
         color = colors.get(category_value)
     elif isinstance(colors, np.ndarray):
         color = colors.item() if colors.ndim == 0 else colors[index % len(colors)] if len(colors) else None

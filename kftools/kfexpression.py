@@ -55,6 +55,8 @@ def _validate_tau_columns(df, columns):
     missing_columns = [col for col in columns if col not in df.columns]
     if len(missing_columns) > 0:
         raise ValueError(f"columns not found in dataframe: {missing_columns}")
+    if df.columns[df.columns.isin(columns)].has_duplicates:
+        raise ValueError("selected dataframe columns must not contain duplicate column names")
     return columns
 
 

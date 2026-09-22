@@ -62,6 +62,8 @@ def compute_delta(df: pd.DataFrame, column: str) -> pd.DataFrame:
     Branch IDs must be unique across the frame; group reused IDs first.
     Missing parents/values yield NaN. Row order, index, and unrelated columns
     are preserved; the selected column is converted to numeric values.
+    Integer inputs use Python-integer differences in an object column to avoid
+    overflow or rounding, with NaN for missing relationships/values.
     """
     if not hasattr(df, "columns"):
         raise ValueError("compute_delta requires a dataframe-like input with columns")
@@ -83,7 +85,9 @@ def compute_delta(df: pd.DataFrame, column: str) -> pd.DataFrame:
         raise ValueError(
             f"compute_delta requires numeric values in column '{column}'; invalid values: {invalid_values}"
         )
-    non_finite_mask = numeric_column.notna() & (~np.isfinite(numeric_column.to_numpy(dtype=float, copy=False)))
+    non_finite_mask = numeric_column.notna() & (
+        ~np.isfinite(numeric_column.to_numpy(dtype=float, copy=False, na_value=np.nan))
+    )
     if non_finite_mask.any():
         invalid_values = sorted(set(out.loc[non_finite_mask, column].astype(str)))
         raise ValueError(
@@ -91,8 +95,12 @@ def compute_delta(df: pd.DataFrame, column: str) -> pd.DataFrame:
         )
     out[column] = numeric_column
     value_by_label = out.set_index("branch_id")[column]
+    if pd.api.types.is_integer_dtype(numeric_column.dtype):
+        # Python integers preserve exact differences beyond fixed-width bounds.
+        numeric_column = numeric_column.astype(object).where(numeric_column.notna(), np.nan)
+        value_by_label = value_by_label.astype(object).where(value_by_label.notna(), np.nan)
     parent_values = out["parent"].map(value_by_label)
-    out[f"delta_{column}"] = out[column] - parent_values
+    out[f"delta_{column}"] = numeric_column - parent_values
     return out
 
 

@@ -2,6 +2,7 @@ import gzip
 import os
 import re
 import warnings
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 import numpy as np
@@ -369,13 +370,16 @@ def _gene_species_rows(context, is_ultrametric):
         row = {
             "branch_id": gn.branch_id,
             "spnode_coverage": "" if coverage_node is None else species_names[coverage_node],
+            "spnode_coverage_id": pd.NA if coverage_node is None else coverage_node.branch_id,
         }
         if is_ultrametric:
             row["spnode_age"] = ""
+            row["spnode_age_id"] = pd.NA
             if coverage_node is not None:
                 age_node = _species_node_at_age(coverage_node, gene_age[gn], species_age, species_up_age)
                 if age_node is not None:
                     row["spnode_age"] = species_names[age_node]
+                    row["spnode_age_id"] = age_node.branch_id
         rows.append(row)
     return rows
 
@@ -392,13 +396,16 @@ def node_gene2species(
     Parsing defaults to legacy mode. Missing reference species emit a warning
     and give affected nodes/ancestors empty spnode_coverage strings. Optional
     spnode_age requires both trees to be exactly ultrametric. Join on branch_id,
-    not dataframe row position.
+    not dataframe row position. Nullable spnode_coverage_id/spnode_age_id columns
+    identify species-tree branches even when their names are empty or repeated;
+    missing mappings use pd.NA. IDs match nwk2table on the original species tree.
     """
     is_ultrametric = validate_boolean_flag(is_ultrametric, "is_ultrametric")
     species_parser = _resolve_species_parser_alias(species_parser, parser)
     gene_tree = _load_og_tree(gene_tree, "gene_tree")
-    species_tree = _load_og_tree(species_tree, "species_tree")
+    species_tree = copy_tree(_load_og_tree(species_tree, "species_tree"))
     label_by_leaf, species_counts = _species_tree_labels(species_tree, species_parser)
+    species_tree = add_numerical_node_labels(species_tree)
     gene_tree = add_numerical_node_labels(copy_tree(gene_tree))
     _validate_gene_species_ultrametric(gene_tree, species_tree, is_ultrametric)
     _rename_gene_leaves(gene_tree, species_parser)
@@ -418,14 +425,16 @@ def node_gene2species(
         is_ultrametric,
     )
     columns = ["branch_id", "spnode_coverage", "spnode_age"] if is_ultrametric else ["branch_id", "spnode_coverage"]
-    return pd.DataFrame(rows, columns=columns)
+    id_columns = ["spnode_coverage_id", "spnode_age_id"] if is_ultrametric else ["spnode_coverage_id"]
+    result = pd.DataFrame(rows, columns=columns + id_columns)
+    return result.astype(dict.fromkeys(id_columns, "Int64"))
 
 
 def _read_tsv(file, argument_name):
     try:
         # Identifiers must survive numeric inference and pandas' NA vocabulary.
         # Converters apply only to names; numeric columns keep normal NA parsing.
-        return pd.read_csv(file, sep="\t", converters={"node_name": str, "param": str})
+        return pd.read_csv(file, sep="\t", converters={"node_name": str, "param": str}, dtype={"regime": "string"})
     except (OSError, UnicodeDecodeError, pd.errors.ParserError, pd.errors.EmptyDataError) as exc:
         raise ValueError(f"Failed to read {argument_name} as UTF-8 tab-separated text: {file}") from exc
 
@@ -434,24 +443,33 @@ def _invalid_column_values(df, mask, column):
     return sorted(set(df.loc[mask, column].astype(str)))
 
 
+def _parse_regime_id(value):
+    if pd.isna(value):
+        return pd.NA
+    try:
+        numeric = Decimal(str(value))
+    except InvalidOperation as exc:
+        raise ValueError("must be numeric or NaN") from exc
+    if not numeric.is_finite():
+        raise ValueError("must contain finite numeric values")
+    if numeric != numeric.to_integral_value():
+        raise ValueError("must contain integer IDs")
+    if numeric < 0:
+        raise ValueError("must contain non-negative IDs")
+    if numeric > int(INT64_MAX):
+        raise ValueError(f"must be <= {INT64_MAX} to avoid integer overflow")
+    return int(numeric)
+
+
 def _validated_regime_series(df, df_name):
-    numeric = pd.to_numeric(df["regime"], errors="coerce")
-    validations = [
-        (df["regime"].notna() & numeric.isna(), "must be numeric or NaN"),
-        (
-            numeric.notna() & (~np.isfinite(numeric.to_numpy(dtype=float, copy=False))),
-            "must contain finite numeric values",
-        ),
-        (numeric.notna() & (numeric != np.floor(numeric)), "must contain integer IDs"),
-        (numeric.notna() & (numeric < 0), "must contain non-negative IDs"),
-        (numeric.notna() & (numeric > INT64_MAX), f"must be <= {INT64_MAX} to avoid integer overflow"),
-    ]
-    for invalid_mask, message in validations:
-        if invalid_mask.any():
-            invalid_values = _invalid_column_values(df, invalid_mask, "regime")
-            prefix = f"{df_name} " if df_name else ""
-            raise ValueError(f"{prefix}regime column {message}; invalid values: {invalid_values}")
-    return numeric
+    values = []
+    try:
+        for value in df["regime"]:
+            values.append(_parse_regime_id(value))
+    except ValueError as exc:
+        prefix = f"{df_name} " if df_name else ""
+        raise ValueError(f"{prefix}regime column {exc}; invalid value: {value}") from exc
+    return pd.Series(values, index=df.index, dtype="Int64")
 
 
 def _validated_trait_columns(df_leaf, required_columns):
@@ -639,6 +657,8 @@ def ou2table(regime_file: PathInput, leaf_file: PathInput, input_tree_file: Path
     ]
     cn3 = ["mu_" + tissue for tissue in tissues]
     cn = cn1 + cn2 + cn_relationships + cn3
+    if len(set(cn)) != len(cn):
+        raise ValueError("trait names conflict with reserved OU statistic column names")
     _assign_ou_regimes(tree, _ou_regime_map(nodes, df_regime))
     mu_by_regime = _ou_mu_by_regime(df_leaf, tissues, nodes)
     arrays = _ou_node_arrays(nodes, mu_by_regime, len(cn3))
@@ -1010,7 +1030,7 @@ def regime2tree(file: PathInput) -> dict[str, object]:
     """
     file = coerce_path_argument(file, "file")
     try:
-        df = pd.read_csv(file, sep="\t", header=0, index_col=False)
+        df = pd.read_csv(file, sep="\t", header=0, index_col=False, dtype={"regime": "string"})
     except (OSError, UnicodeDecodeError, pd.errors.ParserError, pd.errors.EmptyDataError) as exc:
         raise ValueError(f"Failed to read file as UTF-8 tab-separated text: {file}") from exc
     if df.shape[0] == 0:
@@ -1023,7 +1043,7 @@ def regime2tree(file: PathInput) -> dict[str, object]:
     df["regime"] = _validated_regime_series(df, "")
     out: dict[str, object] = {}
     non_nan_regimes = df["regime"].dropna()
-    out["num_regime"] = 0 if non_nan_regimes.empty else int(non_nan_regimes.max() + 1)
+    out["num_regime"] = 0 if non_nan_regimes.empty else int(non_nan_regimes.max()) + 1
     param_rows, traits = _regime_parameter_rows(df)
     _add_regime_parameters(out, param_rows, traits)
     if {"alpha", "sigma2"} <= set(param_rows["param"]):

@@ -18,7 +18,9 @@ The first two files are tab-separated tables with headers:
 | `regime_file` | `node_name`, `regime` | Explicit regime assignments; other nodes inherit their parent's regime |
 | `leaf_file` | `node_name`, `param`, `regime`, at least one trait column | Trait estimates per regime; every additional column is treated as a trait |
 
-Regime IDs are non-negative integers; missing IDs are permitted in table rows.
+Regime IDs are non-negative int64 integers; missing IDs are permitted in table
+rows. IDs are parsed without floating-point rounding, including values above
+`2**53`. Integral decimal/scientific notation such as `1.0` and `1e0` is accepted.
 An unassigned root starts in regime 0. Rows with an assigned regime need a
 non-empty `node_name` in `regime_file`. Conflicting assignments to the same node
 are rejected. `ou2table` reads `node_name` and `param` as text, preserving names
@@ -29,6 +31,9 @@ Identical rows of regime/trait means are deduplicated, and remaining values are
 averaged by regime, ignoring missing values per trait. Every regime used by the
 tree needs a finite mean for every trait. Trait columns must otherwise be
 numeric or missing.
+Trait names `complementarity`, `complementarity_parent`, and
+`complementarity_sisters` are rejected because their `mu_` columns would collide
+with derived statistics.
 
 The derived expression statistics assume that mu values are on the
 `log2(expression + 1)` scale. `mu_<trait>` retains that scale. Tau and

@@ -138,6 +138,7 @@ def transfer_internal_node_names(tree_to: TreeSource, tree_from: TreeSource) -> 
     """
     tree_to = copy_tree(_load_tree_or_value_error(tree_to, parser=1, argument_name="tree_to"))
     tree_from = copy_tree(_load_tree_or_value_error(tree_from, parser=1, argument_name="tree_from"))
+    _validate_identical_tip_sets(tree_to, tree_from)
     tree_to = add_numerical_node_labels(tree_to)
     tree_from = add_numerical_node_labels(tree_from)
     to_leafsets = _descendant_leafsets(tree_to)

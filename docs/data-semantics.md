@@ -16,7 +16,8 @@ back-transformation raise `ValueError`.
 
 For two or more tissues, tau is `sum(1 - x_i / max(x)) / (n - 1)`. A single
 tissue or an all-zero profile returns zero by convention. The dataframe is
-not modified.
+not modified. Selected column names must occur exactly once in the dataframe;
+duplicate tissue columns are rejected rather than counted as extra tissues.
 
 `calc_complementarity` flattens both inputs, requires equal non-zero numbers of
 finite, non-negative values, and returns the mean of
@@ -79,7 +80,7 @@ use exact ultrametric checks and inspect every child at multifurcations.
 | `taxonomic_annotation` | Writes species/taxonomy attributes in place |
 | `get_misc_node_statistics` | Writes `branch_id`, `sci_name`, and `taxid` even when `tax_annot=False` |
 | `transfer_root`, `transfer_internal_node_names` | Return a deep-copied target; neither input is modified |
-| `node_gene2species` | Copies the gene tree for its work; neither input is modified |
+| `node_gene2species` | Copies both trees for its work; neither input is modified |
 
 Copy a tree before calling an in-place function if its original attributes must
 remain untouched. A failed in-place annotation may already have changed some
@@ -155,12 +156,20 @@ branch ID, though it can change dataframe row order.
 Species absent from the reference tree emit `RuntimeWarning`; affected nodes
 and their ancestors have an empty `spnode_coverage` string. Optional
 `spnode_age` values also use empty strings when no mapping is available.
+The additional nullable integer columns `spnode_coverage_id` and, when requested,
+`spnode_age_id` identify the corresponding species-tree branches. They match
+`nwk2table(species_tree)` branch IDs using the original species-tree leaf labels.
+Unmapped nodes have `pd.NA` IDs. Use these IDs to distinguish unnamed or equally
+named internal nodes; the legacy name columns remain unchanged.
 
 `compute_delta` returns a copy with `delta_<column> = child - parent`, preserving
 the index, row order, and unrelated columns. Branch IDs must be unique across
 the supplied frame; split multiple orthogroups first if they reuse IDs. A
 missing parent or value yields NaN. An existing `delta_<column>` is overwritten
 in the result, and numeric text in the selected input column is converted.
+Integer input columns are subtracted using Python integers and return an object
+delta column, preserving exact differences even outside int64 bounds. Missing
+relationships/values still yield NaN; the original value column keeps its dtype.
 
 `get_most_recent` and `MostRecentLookup.find` start at the requested node itself
 and walk toward the root, returning the first matching row's requested value.

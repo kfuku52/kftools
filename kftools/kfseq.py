@@ -327,7 +327,7 @@ def _validate_subroot_theta_entries(subroot_thetas, subroot_names):
 
 def _average_root_theta_positions(subroot_thetas, subroot_names, params, branch_lengths):
     zero_length = branch_lengths == 0
-    weights = None if zero_length.any() else np.reciprocal(branch_lengths)
+    weights = None if zero_length.any() else branch_lengths.min() / branch_lengths
     root_thetas = []
     for codon_position in CODON_POSITIONS:
         codon_position_thetas = {}
