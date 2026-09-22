@@ -45,6 +45,8 @@ when its regime differs from its parent's; the root is not a shift. On shift
 rows, `sister_branch_ids`, `delta_maxmu_sisters`, and
 `mu_complementarity_sisters` are aligned tuples sorted by sister branch ID.
 `delta_maxmu_parent` and `mu_complementarity_parent` compare with the parent.
+Each `delta_maxmu` comparison is the node's maximum mu minus the comparison
+node's maximum mu; positive values mean a larger maximum at the focal node.
 Legacy scalar `delta_maxmu` and `mu_complementarity` refer to the sister and are
 populated only when exactly one sister exists. Non-shift rows have empty sister
 tuples and NaN comparison metrics. `num_child_shift` counts immediate shifted
@@ -74,11 +76,19 @@ with TemporaryDirectory() as temporary:
     )
     nodes = ou2table(regime_file, leaf_file, tree_file)
 
+assert nodes.shape == (3, 15)
+assert nodes["branch_id"].is_unique
+assert {"mu_leaf", "mu_root", "delta_tau", "sister_branch_ids"} <= set(nodes.columns)
 shift = nodes.loc[nodes["is_shift"] == 1].iloc[0]
 assert shift["regime"] == 1
 np.testing.assert_allclose(shift["tau"], 6 / 7)
 np.testing.assert_allclose(shift["mu_complementarity_parent"], 3 / 7)
 ```
+
+The returned table has one row per node, including the root. It contains
+`branch_id`, not node names; join to `nwk2table` using the same tree when labels
+are needed. No result file is written by `ou2table`, and the example removes
+its three temporary input files on leaving the `with` block.
 
 ## OU parameter summaries
 
@@ -99,7 +109,10 @@ identifier-preserving reader in `ou2table`.
 
 `kfog.get_aln_stats` reads plain-text FASTA. All sequences must have the same
 gapped length. It returns `num_site`, `num_seq`, `len_max`, and `len_min`; only
-`-` is excluded when counting ungapped lengths. An empty file returns zeros.
+`-` is excluded when counting ungapped lengths. `num_site` counts alignment
+columns (including gaps), `num_seq` counts FASTA records, and `len_min`/`len_max`
+are the smallest/largest ungapped character counts, not necessarily codon counts.
+An empty file returns zeros.
 It counts characters rather than validating a nucleotide alphabet.
 
 `kfseq.alignment2nuc_freqs` reads one named sequence from plain-text FASTA. A
@@ -131,4 +144,5 @@ The remaining log readers accept plain text:
 
 The dictionary log readers return only recognized fields; an empty dictionary
 does not certify a valid or successful upstream run. Check that required output
-keys exist. Read errors raise `ValueError`.
+keys exist. Read errors raise `ValueError`; a known exception for truncated
+gzip files is recorded in the [0.6.7 audit](documentation-audit-0.6.7.md#b-unresolved-reader-error).

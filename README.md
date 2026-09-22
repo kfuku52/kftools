@@ -12,11 +12,27 @@ phylogenetics, expression analysis, statistics, sequence models, and plotting.
 ## Installation
 
 Python 3.10 or newer is required; CI tests Python 3.10–3.14. Install the current
-default branch with Git and pip:
+default branch with Git and pip in a virtual environment:
 
 ```bash
+python -m venv .venv
+source .venv/bin/activate
 python -m pip install git+https://github.com/kfuku52/kftools.git
 ```
+
+The activation command above is for a Unix-style shell. On Windows PowerShell,
+use `.venv\Scripts\Activate.ps1`. Pip installs the Python runtime dependencies;
+ETE4 may require a compiler if no compatible wheel is available. This library
+does not install a `kftools` command. Verify the active Python with:
+
+```bash
+python -c "from kftools.kfphylo import get_tree_height; print(get_tree_height('(A:1,B:1);'))"
+```
+
+The result is `1.0`. Continue with the [self-contained Python examples](docs/examples.md).
+Notung, IQ-TREE, and mapNH are not invoked by the library: the corresponding
+helpers read existing outputs or construct parameter strings. NCBI annotation
+has separate [database prerequisites](docs/data-semantics.md#species-parsing-and-taxonomy).
 
 For local development, use Python 3.14 and the reproducible environment in the
 [development guide](docs/development.md). Runtime minimum requirements remain in

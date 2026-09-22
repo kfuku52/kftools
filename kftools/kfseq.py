@@ -78,7 +78,11 @@ def codon2nuc_freqs(
     codon_freqs: Mapping[str, float] | None = None,
     model: str = "",
 ) -> list[dict[str, float]]:
-    """Convert codon frequencies to F1X4 or F3X4 nucleotide frequencies."""
+    """Return a list of one F1X4 or three F3X4 nucleotide-frequency dictionaries.
+
+    Supply a non-empty model such as F1X4 or GY+F3X4; the empty default raises
+    ValueError. Each returned dictionary has normalized A/T/C/G frequencies.
+    """
     if codon_freqs is None:
         codon_freqs = {}
     if not isinstance(codon_freqs, Mapping):
@@ -149,7 +153,11 @@ def _validate_theta_entries(thetas):
 
 
 def get_mapnh_thetas(model: str, thetas: Sequence[dict[str, float]] | None) -> str:
-    """Render validated F1X4 or F3X4 theta values as a mapNH model string."""
+    """Render validated F1X4 or F3X4 theta values as a mapNH model string.
+
+    thetas is a list/tuple of one F1X4 or three F3X4 dictionaries, not a bare
+    dictionary. Pass an empty list/tuple or None for an empty parameter string.
+    """
     _validate_model_string(model)
     frequency_model = _frequency_model_kind(model)
     if thetas is None:

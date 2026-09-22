@@ -31,13 +31,21 @@ Model strings must contain exactly one of the case-sensitive tokens `F1X4` or
 
 | Function | F1X4 | F3X4 |
 | --- | --- | --- |
-| `codon2nuc_freqs` | One pooled A/T/C/G dictionary | Three dictionaries, one per codon position |
-| `get_mapnh_thetas` | One theta dictionary, or none | Three theta dictionaries, or none |
-| `alignment2nuc_freqs` | Not implemented | Three dictionaries for one FASTA sequence |
-| `weighted_mean_root_thetas` | Not implemented | Three dictionaries for the root |
+| `codon2nuc_freqs` | List containing one pooled A/T/C/G dictionary | List of three dictionaries, one per codon position |
+| `get_mapnh_thetas` | List/tuple containing one theta dictionary, or empty/`None` | List/tuple of three theta dictionaries, or empty/`None` |
+| `alignment2nuc_freqs` | Not implemented | List of three dictionaries for one FASTA sequence |
+| `weighted_mean_root_thetas` | Not implemented | List of three dictionaries for the root |
+
+`get_mapnh_thetas` returns a model **string**; the table describes its `thetas`
+argument, which is required even when passing `None`. `codon2nuc_freqs` requires
+a non-empty `model` in practice: its historical `model=""` default raises
+`ValueError`. For example, use `codon2nuc_freqs({"AAA": 1.0}, model="F1X4")[0]`
+to obtain the pooled dictionary.
 
 The two unimplemented paths raise `NotImplementedError` after validating their
-inputs; they do not fall back to F3X4. `codon2nuc_freqs` accepts lowercase codons,
+model and structural inputs; they do not fall back to F3X4. The FASTA reader
+locates the selected sequence first, but only the F3X4 path validates its
+alphabet and codon length. `codon2nuc_freqs` accepts lowercase codons,
 but every codon must contain exactly three A/T/C/G bases. Frequencies must be
 finite and non-negative with a positive total.
 
@@ -66,7 +74,10 @@ the path does not exist. Unsupported types such as numbers raise `TypeError`;
 The default ETE parser is `1` (internal node names). `nwk2table(attr="support")`
 uses parser `0` for strings and paths; an already supplied tree is not reparsed.
 Distance calculations require explicit finite, non-negative non-root branch
-lengths. `check_ultrametric` defaults to `tol=0`, so its comparison is exact;
+lengths. Heights and node ages retain the input branch-length unit; they are
+not converted to years or substitutions. `nwk2table(age=True, attr="dist")`
+measures age backward from the tips (tip age zero), not depth from the root.
+`check_ultrametric` defaults to `tol=0`, so its comparison is exact;
 pass a positive absolute tolerance when appropriate for rounded input.
 `nwk2table(age=True, attr="dist")` and `node_gene2species(is_ultrametric=True)`
 use exact ultrametric checks and inspect every child at multifurcations.
@@ -134,6 +145,11 @@ and use the first match. `get_misc_node_statistics` skips NCBI access by default
 (`tax_annot=False`), filling `taxid` with `-999`.
 
 ## Node tables and ancestor lookup
+
+The table APIs return pandas DataFrames in memory; they do not choose output
+filenames, save tables, or cache results. Relative input paths are resolved from
+the process working directory. The library has no configuration-file or
+environment-variable override layer for API arguments.
 
 Join and compare node tables by `branch_id`, not by dataframe row position.
 `nwk2table` sorts rows by branch ID; other tree-to-table functions can return
@@ -221,7 +237,9 @@ confidence_low, confidence_high)`. The probability estimate is
 `P(X < Y) + 0.5 * P(X = Y)`. `ttype=0` selects a two-sided test, positive values
 select `X < Y`, and negative values select `X > Y`. The confidence interval is
 always a two-sided `1 - alpha` t approximation and is not clipped to `[0, 1]`.
-Zero pooled variance raises `ValueError`.
+`alpha` defaults to `0.05` and must be strictly between zero and one.
+`dof` is the approximate t-distribution degrees of freedom. Zero pooled
+variance raises `ValueError`.
 
 `brunner_munzel_test` returns only `(statistic, pvalue)` after filtering its
 samples. `alternative` accepts `less`/`l`, `greater`/`g`, and `two_sided`;

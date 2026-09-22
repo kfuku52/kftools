@@ -2,7 +2,8 @@
 
 Each Python block is self-contained. See [data semantics](data-semantics.md) for
 defaults and missing-value rules, and [file formats](file-formats.md) for an OU
-file example.
+file example. After installing, save a block as a `.py` file and run it with
+the same environment's `python`, or paste it into a Python session.
 
 ## Expression specificity
 
@@ -123,7 +124,9 @@ np.testing.assert_allclose(brunner_munzel_test(x, y), [statistic, pvalue])
 
 Select `method="ols"` for ordinary least squares; `ols_annotations` otherwise
 defaults to median regression. This block writes `kftools-example.png` in the
-current directory. For a headless session, set `MPLBACKEND=Agg` before running.
+current directory, replacing that file on rerun. The plotting APIs return axes;
+the explicit `fig.savefig` call saves the image. For a headless session, set
+`MPLBACKEND=Agg` before running.
 
 ```python
 import matplotlib.pyplot as plt

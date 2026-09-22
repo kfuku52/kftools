@@ -112,8 +112,14 @@ require 3.14.
 `wheel-smoke` uses `PYTHON` and imports the installed wheel outside the repository
 with `PYTHONPATH` cleared. Keep exactly one wheel in `dist/`. Repeated builds of
 different versions leave multiple wheels; use `make clean PYTHON=.venv/bin/python`
-before building if those artifacts can be discarded, or choose the wheel with
-`--wheel /absolute/path/to/package.whl`. To check the single wheel using 3.12:
+before building if those artifacts can be discarded, or select a wheel explicitly:
+
+```sh
+.venv/bin/python scripts/check_environment.py wheel --wheel /absolute/path/to/package.whl
+```
+
+Replace the placeholder with the newly built wheel's actual path. To check the
+single wheel using 3.12:
 
 ```sh
 .venv/bin/python scripts/check_environment.py wheel --python python3.12
@@ -185,8 +191,11 @@ imports and input construction. Measurements for the 0.6.0 changes are in
 ## Documentation and distributions
 
 The maintained guides live in `docs/` and the public function docstrings. Update
-examples and data/file semantics together when an interface changes. Source
-distributions include the guides, images, development scripts, constraints,
+examples and data/file semantics together when an interface changes.
+`tests/test_documentation.py` executes the Python blocks in `docs/examples.md`
+and `docs/file-formats.md` in temporary directories and checks the plot output.
+It runs in the normal test suite; there is no separate documentation build.
+Source distributions include the guides, images, development scripts, constraints,
 and tests via [`MANIFEST.in`](../MANIFEST.in); wheels include the library and
 `py.typed`, with the online documentation linked in package metadata.
 
