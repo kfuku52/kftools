@@ -34,3 +34,39 @@ Repository-specific instructions override these defaults.
 - For GitHub Actions edits, use `optimize-github-actions` in `.agents/skills/`.
   Preserve required coverage; never run untrusted PR code on self-hosted runners.
 <!-- END KF AGENT POLICY -->
+
+# Working in kftools
+
+- Start with [README.md](README.md) for the public module map, then
+  [docs/development.md](docs/development.md) for setup and check selection.
+  This is a Python library with no installed CLI. Public entry points are
+  `kftools/kf*.py`; shared tree, table, and regression helpers are private
+  modules used by those APIs. Follow their callers when choosing tests.
+- From the repository root, create a Python 3.14 venv with
+  `python3.14 -m venv .venv`, then `make install PYTHON=.venv/bin/python`.
+  Use this interpreter explicitly; a system Python may lack the dev tools.
+  Do not regenerate dependency snapshots as part of routine setup.
+- Use `make test PYTHON=.venv/bin/python` for local runtime feedback,
+  `make lint PYTHON=.venv/bin/python` and
+  `make typecheck PYTHON=.venv/bin/python` for quality checks, and
+  `make check PYTHON=.venv/bin/python` before delivery. The development guide's
+  [change-to-check table](docs/development.md#choose-checks-for-a-change) gives
+  focused test selections and separates local checks from network/install work.
+  Use [verify-kftools-change](.agents/skills/verify-kftools-change/SKILL.md) when
+  deciding and executing affected verification; do not substitute a focused
+  subset for the delivery check.
+- Before changing numerical behavior, defaults, mutations, labels, or output
+  columns, read the relevant [data semantics](docs/data-semantics.md); for
+  parsers, also read [file formats](docs/file-formats.md). Preserve expression
+  scales, model support, branch IDs/missing-value conventions, tree-copy
+  behavior, and regression defaults unless a behavior change is requested.
+  Public annotations and `py.typed` are part of the supported API. Keep runtime
+  compatibility with Python 3.10 even though type checks run on 3.14.
+- Do not hand-edit generated `build/`, `dist/`, `kftools.egg-info/`, caches, or
+  `.venv/`. Preserve pre-existing artifacts and unrelated files; `make clean`
+  removes build artifacts and coverage. Keep example outputs in a temporary
+  directory. Do not initialize/update the user's NCBI database for routine
+  verification; taxonomy tests use fakes and real annotation may download data.
+- Finish by reviewing the diff and reporting changed behavior/files, commands
+  and results, and skipped checks with reasons. For push, use the existing
+  `prepare-github-push` skill; the version source is `kftools/__init__.py`.

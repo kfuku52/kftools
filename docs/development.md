@@ -41,6 +41,55 @@ shared Python script; `lock-dev` invokes `$(UV)` instead. Set `PYTHON` to the
 desired interpreter. `make format`, `make lint`, `make typecheck`, and `make test`
 provide shorter feedback loops; only `format` changes source formatting.
 
+## Choose checks for a change
+
+The existing pytest suite uses small synthetic inputs and temporary fixture
+files; taxonomy calls are faked and plotting uses the noninteractive Agg
+backend. Once dependencies are installed, `make test` and `make check` need no
+research datasets or service access. There is no separate integration-test
+marker or installed application CLI. Run library calls from
+[the examples](examples.md); put their generated plots in a temporary working
+directory when trying them.
+
+For focused feedback, run `.venv/bin/python -m pytest -q` followed by the test
+paths below, from the repository root. A successful run exits zero with no
+failed tests; unexpected warnings fail under the existing pytest configuration.
+Paths are starting points: also search the cross-module tests
+`test_improvements.py` and `test_kftools_regressions.py` for the affected API.
+
+| Changed behavior | Focused tests under `tests/` |
+| --- | --- |
+| Expression transforms or sequence models | `test_kfexpression.py` or `test_kfseq.py`; include `test_kfog.py` for expression changes consumed by OU tables |
+| Tree loading, copying, rooting, labels | `test_kfphylo.py`, `test_tree_io.py`, `test_kfog.py`, `test_improvements.py`, `test_kftools_regressions.py` |
+| Node/OU tables, ancestor lookup, file readers | `test_kfog.py`, `test_table_integrity.py`, `test_improvements.py`, `test_kftools_regressions.py` |
+| Species parsing and taxonomy queries | `test_kfspecies.py`, `test_kfphylo.py`, `test_kfog.py`, `test_improvements.py`, `test_kftools_regressions.py` |
+| Plots or `_regression.py` | `test_kfplot.py`, `test_plot_statistics.py`, `test_kftools_regressions.py` |
+| Standalone statistics or utilities | `test_kfstat.py` or `test_kfutil.py` |
+| Shared validation or changes spanning several modules | Full `make test PYTHON=.venv/bin/python` |
+| Public signatures, return types, `_typing.py` | Runtime callers above plus `make typecheck PYTHON=.venv/bin/python` (`tests/typing` is static, not a pytest suite) |
+| Packaging, version, or packaged files | `make build` and installed `wheel-smoke` from the clean-environment section; select the newly built wheel explicitly if older wheels exist |
+| Documentation or developer instructions | Execute changed commands/examples, verify local links and consistency with code/configuration; do not run dependency upgrades or benchmarks merely to check prose |
+
+For example, the tree/copy selection is:
+
+```sh
+.venv/bin/python -m pytest -q tests/test_kfphylo.py tests/test_tree_io.py tests/test_kfog.py tests/test_improvements.py tests/test_kftools_regressions.py
+```
+
+Before delivery, run `make check PYTHON=.venv/bin/python`; it must pass lint,
+format validation, typing, and the full suite with at least 85% branch coverage.
+Focused pytest runs do not measure that coverage gate. `.coverage` is regenerated
+by this target, and quality tools write their usual ignored caches.
+
+Installation, `check-minimum`, `check-latest`, `wheel-smoke`, `audit`, and the
+isolated build may access package indexes or advisory services. They are
+separate from the local feedback loop. Reproduce the relevant CI environments
+when changing dependencies, Python support, packaging, or their check scripts;
+report any unavailable interpreter/network check as unverified. Real NCBI
+annotation and large tree benchmarks are separate, deliberate workloads, not
+prerequisites for ordinary tests. Do not lower warning/coverage gates or replace
+dependency constraints to make a check pass.
+
 ## Clean environments
 
 ```sh
