@@ -430,11 +430,44 @@ def node_gene2species(
     return result.astype(dict.fromkeys(id_columns, "Int64"))
 
 
+_TSV_NUMERIC_NA_VALUES = (
+    "-1.#IND",
+    "1.#QNAN",
+    "1.#IND",
+    "-1.#QNAN",
+    "#N/A N/A",
+    "#N/A",
+    "N/A",
+    "n/a",
+    "NA",
+    "<NA>",
+    "#NA",
+    "NULL",
+    "null",
+    "NaN",
+    "-NaN",
+    "nan",
+    "-nan",
+    "None",
+    "",
+)
+
+
 def _read_tsv(file, argument_name):
     try:
-        # Identifiers must survive numeric inference and pandas' NA vocabulary.
-        # Converters apply only to names; numeric columns keep normal NA parsing.
-        return pd.read_csv(file, sep="\t", converters={"node_name": str, "param": str}, dtype={"regime": "string"})
+        # pandas 3.1 also applies NA recognition after converters. Keep text
+        # identifiers literal and retain the established numeric NA vocabulary.
+        with open(file, encoding="utf-8") as stream:
+            columns = pd.read_csv(stream, sep="\t", nrows=0).columns
+            stream.seek(0)
+            numeric_na = {column: _TSV_NUMERIC_NA_VALUES for column in columns if column not in {"node_name", "param"}}
+            return pd.read_csv(
+                stream,
+                sep="\t",
+                dtype={"node_name": "str", "param": "str", "regime": "string"},
+                keep_default_na=False,
+                na_values=numeric_na,
+            )
     except (OSError, UnicodeDecodeError, pd.errors.ParserError, pd.errors.EmptyDataError) as exc:
         raise ValueError(f"Failed to read {argument_name} as UTF-8 tab-separated text: {file}") from exc
 

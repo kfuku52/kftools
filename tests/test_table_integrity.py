@@ -63,14 +63,15 @@ def test_compute_delta_preserves_existing_columns_index_and_input():
     np.testing.assert_allclose(result["delta_value"], [-10.0, -10.0, np.nan])
 
 
-@pytest.mark.parametrize("node_name", ["004", "NA"])
+@pytest.mark.parametrize("node_name", ["004", "NA", "NULL", "nan"])
 def test_ou_reads_node_names_as_lossless_identifiers(tmp_path, node_name):
     tree = tmp_path / "tree.nwk"
     regimes = tmp_path / "regimes.tsv"
     traits = tmp_path / "traits.tsv"
     tree.write_text(f"((A:1,B:1){node_name}:1,C:2)Root;")
-    regimes.write_text(f"node_name\tregime\n{node_name}\t1\n")
-    traits.write_text("node_name\tparam\tregime\tleaf\troot\nC\tmu\t0\t1\t1\nA\tmu\t1\t2\t1\nB\tmu\t1\t2\t1\n")
+    regimes.write_text(f"node_name\tregime\n{node_name}\t1\nRoot\tNULL\n")
+    traits.write_text("node_name\tparam\tregime\tleaf\troot\nC\tmu\t0\t1\t1\nA\tmu\t1\t2\t1\nB\tmu\t1\tNA\tNaN\n")
     result = kfog.ou2table(regimes, traits, tree)
     assert len(result) == 5
     assert result["is_shift"].sum() == 1
+    np.testing.assert_allclose(result.loc[result["is_shift"] == 1, ["mu_leaf", "mu_root"]], [[2, 1]])
